@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Own
+data/proxies/
+data/cache/
+data/out/
+*.mp4
+*.mkv
+*.wav
+*.mp3

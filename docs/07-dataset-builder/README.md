@@ -11,6 +11,10 @@
 - **Target:** 200–500 AMVs. You have 1 (1080p). Prefer 720p+, music-driven edits (hardstyle, phonk, EDM, "flow edits"), clean song audio (no voice-overs), and few heavy overlays.
 - Keep a manifest CSV `data/amvs/manifest.csv` with these columns: file, source URL, editor/channel, song title/artist, genre, anime series, quality notes, split (train/val/test).
 - **Splits by song and by editor** (never random by shot): the same editor's style or the same song in both train and test inflates your scores.
+- **Anime coverage:** training AMVs do **not** need to match the library, because cut timing and `z_dyn` dynamics are largely anime-independent. Diversity matters more: many series, editors, genres and songs. Two exceptions:
+  - **val/test AMVs must be of anime you have in `data/library/`.** The Recall@k metric (step 11 §2.2) ranks the true next shot among *that anime's* library clips. Otherwise the true shot competes against footage from a different anime, which is trivially easy to tell apart.
+  - **Some overlap in training helps** with the `z_sem` domain gap. A PCA fitted only on one series' library represents other art styles poorly. Aim for 20–30 % of AMVs from series in your library, and fit the step 04 PCA on library clips **plus** AMV shots.
+  - Practical rule: pick 2–4 "core" series, collect their episodes for the library and their AMVs for val/test, and collect anything good for training.
 - Use only for personal research; don't redistribute the footage or the trained outputs derived from specific editors' work.
 
 ## 2. Per-AMV pipeline

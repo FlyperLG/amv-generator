@@ -34,7 +34,7 @@
 - L2-normalise the image embeddings, average the 1–2 frames, then renormalise. That gives `clip_raw[512]`.
 
 ### 3.3 PCA → 64
-- Fit PCA on library clip embeddings (≥5k samples), with whitening **off** at first.
+- Fit PCA on library clip embeddings (≥5k samples) **plus training-AMV shot embeddings**, with whitening **off** at first. AMVs cover series that aren't in the library (see step 07 §1), and a library-only PCA would compress those art styles badly. Still fit it only once (see pitfalls).
 - Check explained variance: 64 components should keep ~70–85 %. Save the transform; apply the **same** one to AMV shots.
 - `z_sem = PCA(clip_raw)`. Keep `clip_raw` too, for text queries in step 13 (CLIP text ↔ image needs the raw space).
 

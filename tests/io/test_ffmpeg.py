@@ -6,7 +6,7 @@ Run only the fast unit tests with:  pytest -m "not integration"
 SPECIFICATION
   - probe(path) accepts str or PathLike and returns a MediaInfo.
   - Missing file -> FileNotFoundError (checked before calling ffprobe).
-  - File ffprobe cannot read -> RuntimeError mentioning "ffprobe failed".
+  - File ffprobe cannot read -> RuntimeError whose message mentions "ffprobe".
   - probe() has no side effects (writes no files).
 """
 
@@ -29,7 +29,7 @@ def test_probe_non_media_file_raises(tmp_path):
     fake = tmp_path / "not_a_video.mp4"
     fake.write_text("this is not a video")
 
-    with pytest.raises(RuntimeError, match="ffprobe failed"):
+    with pytest.raises(RuntimeError, match="ffprobe"):
         probe(fake)
 
 

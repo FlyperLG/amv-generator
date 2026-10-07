@@ -61,22 +61,22 @@ Music state per shot window: `m_k` (smoothed features) plus `Δm_k` and `Δ²m_k
 
 Each step has its own folder with a detailed description: goal, inputs/outputs, concepts, tasks, verification, pitfalls, and a definition of done.
 
-| # | Step | Output | Phase |
-|---|---|---|---|
-| 00 | [Setup](00-setup/README.md) | working env, ffmpeg, repo layout | Foundation |
-| 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation |
-| 02 | [Music features](02-music-features/README.md) | per-beat feature table | Features |
-| 03 | [Shot detection](03-shot-detection/README.md) | shot list per video | Features |
-| 04 | [Clip features](04-clip-features/README.md) | clip table with `z_sem`, `z_dyn` | Features |
-| 05 | [Retrieval](05-retrieval/README.md) | clip index, scoring, beam search | Baseline |
-| 06 | [Physics baseline & renderer](06-physics-baseline-and-renderer/README.md) | **first full AMV (A0)** | Baseline |
-| 07 | [Dataset builder](07-dataset-builder/README.md) | training samples from AMVs | Learning |
-| 08 | [Cut timing model](08-cut-timing-model/README.md) | cut probability per beat | Learning |
-| 09 | [Dynamics ladder A1–A5, B](09-dynamics-ladder/README.md) | deterministic models + baselines | Learning |
-| 10 | [Flow-matching expert (A6)](10-flow-matching-expert/README.md) | generative edit expert | Learning |
-| 11 | [Evaluation](11-evaluation/README.md) | metrics, ablation tables, A/B | Research |
-| 12 | [Performance](12-performance/README.md) | profiled, tuned CPU pipeline | Polish |
-| 13 | [Controls & UI](13-controls-and-ui/README.md) | aggression knob, style, Gradio app | Polish |
+| # | Step | Output | Phase | Status |
+|---|---|---|---|---|
+| 00 | [Setup](00-setup/README.md) | working env, ffmpeg, repo layout | Foundation | ✅ |
+| 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation | 🚧 3.1–3.2 done, next: 3.3 frame reader |
+| 02 | [Music features](02-music-features/README.md) | per-beat feature table | Features |  |
+| 03 | [Shot detection](03-shot-detection/README.md) | shot list per video | Features |  |
+| 04 | [Clip features](04-clip-features/README.md) | clip table with `z_sem`, `z_dyn` | Features |  |
+| 05 | [Retrieval](05-retrieval/README.md) | clip index, scoring, beam search | Baseline |  |
+| 06 | [Physics baseline & renderer](06-physics-baseline-and-renderer/README.md) | **first full AMV (A0)** | Baseline |  |
+| 07 | [Dataset builder](07-dataset-builder/README.md) | training samples from AMVs | Learning |  |
+| 08 | [Cut timing model](08-cut-timing-model/README.md) | cut probability per beat | Learning |  |
+| 09 | [Dynamics ladder A1–A5, B](09-dynamics-ladder/README.md) | deterministic models + baselines | Learning |  |
+| 10 | [Flow-matching expert (A6)](10-flow-matching-expert/README.md) | generative edit expert | Learning |  |
+| 11 | [Evaluation](11-evaluation/README.md) | metrics, ablation tables, A/B | Research |  |
+| 12 | [Performance](12-performance/README.md) | profiled, tuned CPU pipeline | Polish |  |
+| 13 | [Controls & UI](13-controls-and-ui/README.md) | aggression knob, style, Gradio app | Polish |  |
 
 ### Milestones
 
@@ -119,7 +119,7 @@ Reference machine: 16 logical cores, PyTorch eager, ~30–80 GFLOP/s effective.
 
 | Stage | Frequency | Target |
 |---|---|---|
-| 1080p → 360p proxy transcode | once per video | ~3–8× real time (decode is the bottleneck) |
+| 1080p → 360p proxy transcode | once per video | ~3–8× real time (decode is the bottleneck); **measured ~30×** |
 | Shot detection on proxies | once | >10× real time |
 | CLIP ViT-B/32, 1–2 frames per clip | once per library | 30–60 min per 12-episode season |
 | Optical flow 160×90 @ 8 fps | once per library | 5–15 min per season |
@@ -141,11 +141,11 @@ Rule #3: **decode 1080p once** (all experiments read 360p proxies; only the fina
 | `data/amvs/` | Reference AMVs (training data) | 1 so far (1080p). Target 200–500. Personal research use only. |
 | `data/library/` | Source anime episodes | Used for retrieval and final render (keep 1080p) |
 | `data/songs/` | Input songs | wav/mp3/flac |
-| `data/proxies/` | 360p / low-fps proxies | generated, git-ignored |
+| `data/proxies/` | 360p / low-fps proxies | generated, git-ignored. AMV and library proxies share this folder; `data/cache/videos.parquet` (`kind` column) says which is which |
 | `data/cache/` | Features, indices, datasets | generated, git-ignored |
 | `data/out/` | Rendered AMVs, timelines | generated, git-ignored |
 
-**Biggest project risk: training data.** Start collecting AMVs now, while you build steps 00–06.
+**Biggest project risk: training data.** Start collecting AMVs now, while you build steps 00–06. AMVs don't need to match the library's anime, except for val/test; see [step 07 §1](07-dataset-builder/README.md#1-data-collection-start-now-in-parallel-with-steps-0106).
 
 ---
 

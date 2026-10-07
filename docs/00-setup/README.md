@@ -80,10 +80,10 @@ Ignore `.venv/`, `data/proxies/`, `data/cache/`, `data/out/`, `*.mp4`, `*.mkv`, 
 
 ## 3. Verification
 
-- [ ] `ffmpeg -version` works in a fresh terminal
-- [ ] `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"` prints `False` for CUDA. This is intended
-- [ ] `python -c "import librosa, cv2, open_clip, scenedetect"` succeeds
-- [ ] `pytest` runs (even with zero tests)
+- [&#x2714;] `ffmpeg -version` works in a fresh terminal
+- [&#x2714;] `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"` prints `False` for CUDA. This is intended
+- [&#x2714;] `python -c "import librosa, cv2, open_clip, scenedetect"` succeeds
+- [&#x2714;] `pytest` runs (even with zero tests)
 
 ## 4. Pitfalls
 

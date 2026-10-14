@@ -25,24 +25,26 @@ Every later step (shot detection, CLIP, optical flow, dataset building) reads th
 | | Path | Format |
 |---|---|---|
 | In | `data/amvs/*.mp4`, `data/library/**/*.mkv|mp4` | original videos |
-| Out | `data/proxies/<video_id>.mp4` | 640 px wide, even height (640×360 for 16:9), constant frame rate at the source's nominal fps, H.264 `-preset ultrafast -crf 28`, **no audio** (audio comes from the wav below) |
-| Out | `data/proxies/<video_id>_audio.wav` | AMVs only: 22.05 kHz mono wav for step 02/07 |
+| Out | `data/proxies/<video_id>_<settings_id>.mp4` | `PROXY_WIDTH` (640) px wide, even height (640×360 for 16:9), constant frame rate at the source's nominal fps, H.264 `-preset ultrafast -crf 28`, **no audio** (audio comes from the wav below) |
+| Out | `data/proxies/<video_id>_<settings_id>.wav` | AMVs only: `AUDIO_SAMPLE_RATE` (22.05 kHz) mono wav for step 02/07 |
 | Out | `data/cache/videos.parquet` | one row per video: id, original path, proxy path, duration, fps, width, height, n_frames, codec |
 
 **`video_id`:** never use the raw file name (spaces, brackets, unicode). **Implemented:** `uuid5(NAMESPACE_URL, <resolved absolute path>)`, e.g. `29c61d55-e3db-54b6-8c10-619321a22807`. It is stable for the same file, and two `Episode 01.mkv` files in different folders get different ids. Moving the `data/` folder changes all ids, so proxies would be rebuilt. Keep the original name in `videos.parquet`.
+
+**`settings_id`:** `uuid5` of the ffmpeg arguments that produced the file (shared helper `_ffmpeg_to_file`). Changing any setting in `amv/config.py` (`PROXY_*`, `AUDIO_*`) gives a new file name, so a stale cache is never reused. Old versions stay in `data/proxies/` until deleted by hand. Proxy and wav of the same video share the `video_id` prefix but have different `settings_id`s; later steps get the paths from `videos.parquet`, never by building them.
 
 ## 3. Tasks
 
 | Task | Status | Code | Tests |
 |---|---|---|---|
 | 3.1 Probe | ✅ done | `amv/io/ffmpeg.py::probe`, `amv/io/media.py` | `tests/io/test_ffmpeg.py`, `tests/io/test_media.py` |
-| 3.2 Proxy transcode | ✅ done | `amv/io/ffmpeg.py::run_proxy_transcode` | `tests/io/test_proxy.py` |
+| 3.2 Proxy transcode | ✅ done | `amv/io/ffmpeg.py::make_video_proxy` | `tests/io/test_video_proxy.py` |
 | 3.3 Frame reader | ✅ done | `amv/io/ffmpeg.py::iter_frames`, `iter_frame_batches` | `tests/io/test_frames.py` |
-| 3.4 Audio extraction | ⏭ next | | |
-| 3.5 Timing printout | partly: transcode measured (see §8); reader throughput still to measure | | |
+| 3.4 Audio proxy | ✅ done | `amv/io/ffmpeg.py::make_audio_proxy` | `tests/io/test_audio_proxy.py` |
+| 3.5 Timing printout | ⏭ next (transcode already measured, see §8) | | |
 | 3.6 Video table | open | | |
 
-Order: 3.4 → 3.5 → 3.6. The benchmark (3.5) needs the frame reader. The video table (3.6) collects the outputs of all the other tasks, so it comes last.
+Order: 3.5 → 3.6. The benchmark (3.5) needs the frame reader. The video table (3.6) collects the outputs of all the other tasks, so it comes last.
 
 ### 3.1 Probe ✅
 *Implemented as `probe(path) -> MediaInfo` (typed dataclasses instead of a dict).*
@@ -51,7 +53,7 @@ Order: 3.4 → 3.5 → 3.6. The benchmark (3.5) needs the frame reader. The vide
 - Watch for **variable frame rate** (VFR): if `r_frame_rate` ≠ `avg_frame_rate`, record a flag. YouTube downloads are sometimes VFR.
 
 ### 3.2 Proxy transcode ✅
-*Implemented as `run_proxy_transcode(in_path, out_dir) -> Path`. Skip rule: the proxy exists and is newer than the source (`st_mtime_ns`; not `st_birthtime`, which survives overwrites on NTFS). Transcode timeout: `PROXY_TRANSCODE_TIMEOUT` in `amv/config.py` (300 s, about 2.5 h of footage at the measured speed).*
+*Implemented as `make_video_proxy(in_path, out_dir) -> Path`. Skip rule: the proxy exists and is newer than the source (`st_mtime_ns`; not `st_birthtime`, which survives overwrites on NTFS). Transcode timeout: `PROXY_TRANSCODE_TIMEOUT` in `amv/config.py` (300 s, about 2.5 h of footage at the measured speed).*
 - One ffmpeg call per video: scale to 640 px wide (keep aspect, even height), force constant frame rate (`-fps_mode cfr` or `-vsync cfr`) to remove VFR headaches, and use `-preset ultrafast`.
 - Use all threads (`-threads 0`) but run **one video at a time**, since ffmpeg already parallelises internally.
 - Write to a temp name and rename when finished, so a crash never leaves a half file that looks complete.
@@ -74,7 +76,8 @@ Typical calls later:
 - CLIP: proxy, specific timestamps (1–2 per clip), 224×224 crop
 - Optical flow: proxy, 8 fps, 160×90, gray
 
-### 3.4 Audio extraction (AMVs)
+### 3.4 Audio proxy (AMVs and songs) ✅
+*Implemented as `make_audio_proxy(in_path, out_dir) -> Path`, sharing `_ffmpeg_to_file` with `make_video_proxy` (renamed from `run_proxy_transcode`). Both kinds also write a `<name>.json` sidecar (`source`, `task`, `ffmpeg_args`; written before the media file is renamed into place, so an existing proxy always has one), and `audio_proxy_path` / `video_proxy_path` compute the cached path without running ffmpeg (for 3.6 and cleanup).*
 - `ffmpeg -i amv.mp4 -vn -ac 1 -ar 22050 out.wav`. Step 02 uses this for AMVs; songs in `data/songs/` get the same treatment.
 
 ### 3.5 Timing printout (needs 3.3)
@@ -83,7 +86,7 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 - frame reader throughput at 8 fps / 320 px from the **proxy** vs from the **original**
 
 ### 3.6 Video table
-- For every video in `data/amvs/` and `data/library/`: `probe()` the original, `run_proxy_transcode()` it, and (AMVs only) extract the wav.
+- For every video in `data/amvs/` and `data/library/`: `probe()` the original, `make_video_proxy()` it, and (AMVs only) extract the wav.
 - Write `data/cache/videos.parquet` with one row per video: `video_id`, **`kind`** (`"amv"` or `"library"`, from the folder it came from), **`series`** (library only: the first sub-folder of `data/library/`, e.g. `data/library/Blue Lock/S01E01.mkv` → `"Blue Lock"`; step 03's clip table needs it), original path and name, proxy path, audio path (or null), duration, fps, `is_vfr`, width, height, n_frames, codec.
 - `data/proxies/` is just a cache keyed by `video_id`; nothing ever lists that folder. Every later step selects videos through this table (`kind == "library"` / `"amv"`), which is why one shared proxy folder is fine.
 - Process one video at a time (see 3.2), log progress, and re-running it should be cheap: everything already done is skipped.

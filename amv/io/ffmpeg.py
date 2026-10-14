@@ -11,8 +11,21 @@ from typing import Any
 
 import numpy as np
 
-from amv.config import FFMPEG, FFPROBE, PROBE_TIMEOUT, PROXY_TRANSCODE_TIMEOUT
+from amv.config import (
+    AUDIO_CHANNELS,
+    AUDIO_EXTRACTION_TIMEOUT,
+    AUDIO_SAMPLE_RATE,
+    FFMPEG,
+    FFPROBE,
+    PROBE_TIMEOUT,
+    PROXY_CRF,
+    PROXY_PRESET,
+    PROXY_TRANSCODE_TIMEOUT,
+    PROXY_WIDTH,
+)
 from amv.io.media import MediaInfo
+
+# --- Shared helpers -----------------------------------------------------------
 
 
 def _file_exists(path: str | os.PathLike | Path) -> Path:
@@ -53,6 +66,30 @@ def _run_subprocess(command: list[str], timeout: float | None) -> CompletedProce
         raise RuntimeError("command timed out") from e
 
 
+def _generate_uuid(name: str) -> str:
+    """Derive a deterministic UUID (version 5) from a string.
+
+    The same input always gives the same UUID, so it can be used as a stable cache key.
+
+    Args:
+        name (str): The string to hash, e.g. a resolved path or a joined list of ffmpeg arguments.
+
+    Returns:
+        str: The UUID in its canonical 36-character string form.
+
+    Raises:
+        ValueError: If name is empty or only whitespace."""
+    if not name.strip():
+        raise ValueError("Name for uuid generation cannot be empty.")
+
+    namespace = uuid.NAMESPACE_URL
+    file_uuid = uuid.uuid5(namespace, name)
+    return str(file_uuid)
+
+
+# --- Probing ------------------------------------------------------------------
+
+
 def probe(path: str | os.PathLike) -> MediaInfo:
     """Probe a media file and return its metadata as a MediaInfo instance.
 
@@ -65,11 +102,12 @@ def probe(path: str | os.PathLike) -> MediaInfo:
     Raises:
         FileNotFoundError: If the file does not exist.
         RuntimeError: If ffprobe fails or times out, e.g. because the file is not a media file."""
+    path = Path(path)
     data = _run_ffprobe(path)
-    return MediaInfo.from_ffprobe(Path(path), data)
+    return MediaInfo.from_ffprobe(path, data)
 
 
-def _run_ffprobe(path: str | os.PathLike) -> dict[str, Any]:
+def _run_ffprobe(path: Path) -> dict[str, Any]:
     """Probe a media file using ffprobe.
 
     Args:
@@ -101,80 +139,87 @@ def _run_ffprobe(path: str | os.PathLike) -> dict[str, Any]:
         raise RuntimeError(f"ffprobe on path {path} failed with error: {e}") from e
 
 
-def _generate_file_uuid(filename: str) -> str:
-    """Derive a deterministic UUID (version 5) from a file name.
+# --- Cached proxies (video and audio) -----------------------------------------
 
-    The same input always gives the same UUID, so it can be used as a stable cache key.
+
+def _output_path(in_path: Path, out_dir: Path, suffix: str, ffmpeg_args: list[str]) -> Path:
+    """Compute the cached output path for a conversion, without creating anything.
+
+    The name is "<video_uuid>_<settings_uuid><suffix>": the first UUID comes from the
+    resolved input path, the second from ffmpeg_args, so changing any setting gives a
+    new name instead of reusing a stale file. All outputs of one source share the prefix.
 
     Args:
-        filename (str): The name to hash, typically an absolute, resolved path.
+        in_path (Path): The source media file.
+        out_dir (Path): The output directory. It does not have to exist yet.
+        suffix (str): The output extension including the dot, e.g. ".mp4".
+        ffmpeg_args (list[str]): The arguments that describe the conversion.
 
     Returns:
-        str: The UUID in its canonical 36-character string form.
+        Path: out_dir / "<video_uuid>_<settings_uuid><suffix>".
 
     Raises:
-        ValueError: If filename is empty or only whitespace."""
-    if not filename.strip():
-        raise ValueError("Filename for uuid generation cannot be empty.")
+        FileNotFoundError: If in_path does not exist.
+        NotADirectoryError: If out_dir exists but is a file."""
+    in_path = _file_exists(in_path).resolve()
+    if out_dir.is_file():
+        raise NotADirectoryError(f"out_dir needs to be an directory was {out_dir}")
 
-    namespace = uuid.NAMESPACE_URL
-    file_uuid = uuid.uuid5(namespace, filename)
-    return str(file_uuid)
+    file_uuid = _generate_uuid(str(in_path))
+    config_uuid = _generate_uuid(" ".join(ffmpeg_args))
+    return out_dir / Path(f"{file_uuid}_{config_uuid}{suffix}")
 
 
-def run_proxy_transcode(in_path: str | os.PathLike | Path, out_dir: str | os.PathLike | Path) -> Path:
-    """Transcode a video into a small, fast-to-decode proxy for analysis.
+def _ffmpeg_to_file(
+    in_path: Path,
+    out_dir: Path,
+    suffix: str,
+    ffmpeg_args: list[str],
+    timeout: float | None,
+    task: str,
+) -> Path:
+    """Run one ffmpeg conversion of in_path into a cached output file in out_dir.
 
-    The proxy is 640 px wide (height keeps the aspect ratio, rounded to an even number),
-    constant frame rate, H.264 (ultrafast, CRF 28) and has no audio. It is named after a
-    UUID of the resolved input path. If a proxy newer than the input already exists, it
-    is reused and nothing is transcoded. ffmpeg writes to a temporary file that is only
-    renamed on success, so a failed or interrupted run never leaves a broken proxy behind.
+    The output path comes from _output_path. If that file already exists and is newer
+    than the input, it is returned without running ffmpeg. ffmpeg writes to a temporary
+    "<name>.tmp<suffix>" file that is only renamed on success, so a failed or interrupted
+    run never leaves a broken output behind. Next to the output, a "<name>.json" sidecar
+    records the resolved source path, the task and the ffmpeg_args, so a human can tell
+    what a hash stands for.
 
     Args:
-        in_path (str | os.PathLike | Path): The source video.
-        out_dir (str | os.PathLike | Path): The directory for proxies; created if missing.
+        in_path (Path): The source media file.
+        out_dir (Path): The output directory; created if missing.
+        suffix (str): The output extension including the dot, e.g. ".mp4". ffmpeg picks
+            the output format from it.
+        ffmpeg_args (list[str]): The arguments between the input and the output file. They
+            are part of the cache key, so they must fully describe the output.
+        timeout (float | None): Seconds before ffmpeg is killed, or None to wait forever.
+        task (str): A short name for the conversion, used in log and error messages.
 
     Returns:
-        Path: The path of the proxy, out_dir / "<uuid>.mp4".
+        Path: The path of the output file.
 
     Raises:
         FileNotFoundError: If in_path does not exist.
         NotADirectoryError: If out_dir exists but is a file.
-        RuntimeError: If ffmpeg fails or exceeds PROXY_TRANSCODE_TIMEOUT."""
-    in_path = _file_exists(in_path).resolve()
-    out_dir = Path(out_dir)
-    if out_dir.is_file():
-        raise NotADirectoryError(f"out_dir needs to be an directory was {out_dir}")
+        RuntimeError: If ffmpeg fails or exceeds the timeout. The message contains the task
+            and ffmpeg's stderr."""
+    in_path = in_path.resolve()
+    final_out_path = _output_path(in_path, out_dir, suffix, ffmpeg_args)
+    tmp_out_path = final_out_path.with_suffix(f".tmp{suffix}")
     out_dir.mkdir(exist_ok=True, parents=True)
 
-    file_uuid = _generate_file_uuid(str(in_path))
-    base_out_path = out_dir / Path(file_uuid)
-    tmp_out_path = base_out_path.with_suffix(".tmp.mp4")
-    final_out_path = base_out_path.with_suffix(".mp4")
-
     if final_out_path.is_file() and in_path.stat().st_mtime_ns < final_out_path.stat().st_mtime_ns:
-        logging.info("Skipped %s, cause it already exists.", in_path)
+        logging.info("%s: Skipped %s, cause it already exists.", task, in_path)
         return final_out_path
 
     command = [
-        str(FFMPEG),
+        FFMPEG,
         "-i",
         str(in_path),
-        "-vf",
-        "scale=640:-2",
-        "-fps_mode",
-        "cfr",
-        "-preset",
-        "ultrafast",
+        *ffmpeg_args,
         "-y",
-        "-threads",
-        "0",
-        "-an",
-        "-c:v",
-        "libx264",
-        "-crf",
-        "28",
         "-hide_banner",
         "-nostdin",
         "-loglevel",
@@ -182,12 +227,143 @@ def run_proxy_transcode(in_path: str | os.PathLike | Path, out_dir: str | os.Pat
         str(tmp_out_path),
     ]
     try:
-        _run_subprocess(command, PROXY_TRANSCODE_TIMEOUT)
-        return tmp_out_path.replace(final_out_path)
+        _run_subprocess(command, timeout)
+        sidecar_data = {
+            "source": str(in_path),
+            "task": task,
+            "ffmpeg_args": ffmpeg_args,
+        }
+        with open(final_out_path.with_suffix(".json"), "w", encoding="utf-8") as sidecar_json:
+            json.dump(sidecar_data, sidecar_json, indent=4)
+
+        final_out_path = tmp_out_path.replace(final_out_path)
+        return final_out_path
     except RuntimeError as e:
-        raise RuntimeError(f"ffmpeg proxy transcode on path {in_path} failed with error: {e}") from e
+        raise RuntimeError(f"ffmpeg {task} on path {in_path} failed with error: {e}") from e
     finally:
         tmp_out_path.unlink(missing_ok=True)
+
+
+def _video_args() -> list[str]:
+    """The ffmpeg arguments of a video proxy, built from the PROXY_* settings at call time."""
+    return [
+        "-vf",
+        f"scale={PROXY_WIDTH}:-2",
+        "-fps_mode",
+        "cfr",
+        "-preset",
+        PROXY_PRESET,
+        "-threads",
+        "0",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-crf",
+        str(PROXY_CRF),
+    ]
+
+
+def video_proxy_path(in_path: str | os.PathLike | Path, out_dir: str | os.PathLike | Path) -> Path:
+    """Return the path make_video_proxy uses for in_path with the current settings.
+
+    Runs no ffmpeg and creates nothing, so it is a cheap way to ask whether a proxy
+    already exists, or which files in out_dir are still current.
+
+    Args:
+        in_path (str | os.PathLike | Path): The source video.
+        out_dir (str | os.PathLike | Path): The directory for proxies. It does not have to exist.
+
+    Returns:
+        Path: out_dir / "<video_uuid>_<settings_uuid>.mp4". The file may not exist yet.
+
+    Raises:
+        FileNotFoundError: If in_path does not exist.
+        NotADirectoryError: If out_dir exists but is a file."""
+    return _output_path(Path(in_path), Path(out_dir), ".mp4", _video_args())
+
+
+def make_video_proxy(in_path: str | os.PathLike | Path, out_dir: str | os.PathLike | Path) -> Path:
+    """Transcode a video into a small, fast-to-decode proxy for analysis.
+
+    The proxy is PROXY_WIDTH px wide (height keeps the aspect ratio, rounded to an even
+    number), constant frame rate, H.264 with PROXY_PRESET and PROXY_CRF, and has no audio.
+    It is cached in out_dir, see _ffmpeg_to_file for the naming and skip rules.
+
+    Args:
+        in_path (str | os.PathLike | Path): The source video.
+        out_dir (str | os.PathLike | Path): The directory for proxies; created if missing.
+
+    Returns:
+        Path: The path of the proxy, out_dir / "<video_uuid>_<settings_uuid>.mp4".
+
+    Raises:
+        FileNotFoundError: If in_path does not exist.
+        NotADirectoryError: If out_dir exists but is a file.
+        RuntimeError: If ffmpeg fails or exceeds PROXY_TRANSCODE_TIMEOUT."""
+    return _ffmpeg_to_file(
+        in_path=Path(in_path),
+        out_dir=Path(out_dir),
+        suffix=".mp4",
+        ffmpeg_args=_video_args(),
+        timeout=PROXY_TRANSCODE_TIMEOUT,
+        task="video proxy",
+    )
+
+
+def _audio_args() -> list[str]:
+    """The ffmpeg arguments of an audio proxy, built from the AUDIO_* settings at call time."""
+    return ["-vn", "-ac", str(AUDIO_CHANNELS), "-ar", str(AUDIO_SAMPLE_RATE)]
+
+
+def audio_proxy_path(in_path: str | os.PathLike | Path, out_dir: str | os.PathLike | Path) -> Path:
+    """Return the path make_audio_proxy uses for in_path with the current settings.
+
+    Runs no ffmpeg and creates nothing, so it is a cheap way to ask whether an audio
+    proxy already exists, or which files in out_dir are still current.
+
+    Args:
+        in_path (str | os.PathLike | Path): The source video or audio file.
+        out_dir (str | os.PathLike | Path): The directory for the wav. It does not have to exist.
+
+    Returns:
+        Path: out_dir / "<video_uuid>_<settings_uuid>.wav". The file may not exist yet.
+
+    Raises:
+        FileNotFoundError: If in_path does not exist.
+        NotADirectoryError: If out_dir exists but is a file."""
+    return _output_path(Path(in_path), Path(out_dir), ".wav", _audio_args())
+
+
+def make_audio_proxy(in_path: str | os.PathLike | Path, out_dir: str | os.PathLike | Path) -> Path:
+    """Extract the audio track of a media file as an uncompressed wav for music analysis.
+
+    The wav is 16-bit PCM, resampled to AUDIO_SAMPLE_RATE Hz and mixed down to
+    AUDIO_CHANNELS channels. The input can be a video (e.g. an AMV) or an audio file
+    (e.g. a song). It is cached in out_dir, see _ffmpeg_to_file for the naming and skip rules.
+
+    Args:
+        in_path (str | os.PathLike | Path): The source video or audio file.
+        out_dir (str | os.PathLike | Path): The directory for the wav; created if missing.
+
+    Returns:
+        Path: The path of the wav, out_dir / "<video_uuid>_<settings_uuid>.wav".
+
+    Raises:
+        FileNotFoundError: If in_path does not exist.
+        NotADirectoryError: If out_dir exists but is a file.
+        RuntimeError: If ffmpeg fails (e.g. the file has no audio stream) or exceeds
+            AUDIO_EXTRACTION_TIMEOUT."""
+    return _ffmpeg_to_file(
+        in_path=Path(in_path),
+        out_dir=Path(out_dir),
+        suffix=".wav",
+        ffmpeg_args=_audio_args(),
+        timeout=AUDIO_EXTRACTION_TIMEOUT,
+        task="audio proxy",
+    )
+
+
+# --- Frame reading ------------------------------------------------------------
 
 
 def iter_frames(

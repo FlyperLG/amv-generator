@@ -34,6 +34,7 @@ def make_media(tmp_path):
     `name` may contain sub-directories ("a/clip.mp4"); they are created.
     `vfr=True` makes a variable-frame-rate video: the first second plays at `rate`,
     the rest at half of it (frame timestamps are stretched, nothing is dropped).
+    Audio is a 440 Hz sine at 44.1 kHz; `channels=2` makes it stereo (same tone on both).
     """
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
@@ -48,6 +49,7 @@ def make_media(tmp_path):
         size: str = "320x180",
         rate: str = "24000/1001",
         vfr: bool = False,
+        channels: int = 1,
     ) -> Path:
         out = tmp_path / name
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -61,6 +63,8 @@ def make_media(tmp_path):
             cmd += ["-vf", f"setpts='if(lt(N,{rate}),N,{rate}+(N-{rate})*2)/({rate})/TB'", "-fps_mode", "vfr"]
         if video:
             cmd += ["-c:v", "libx264", "-preset", "ultrafast"]
+        if audio:
+            cmd += ["-ac", str(channels)]
         cmd.append(str(out))
         subprocess.run(cmd, check=True)
         return out

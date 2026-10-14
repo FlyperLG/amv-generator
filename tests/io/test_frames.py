@@ -308,9 +308,9 @@ def test_bluelock_frame_count_at_8_fps(bluelock_amv):
 
 def test_bluelock_proxy_matches_original(bluelock_amv, tmp_path):
     # Same content at the same timestamp in the original and the proxy (no time offset).
-    from amv.io.ffmpeg import run_proxy_transcode
+    from amv.io.ffmpeg import make_video_proxy
 
-    proxy = run_proxy_transcode(bluelock_amv, tmp_path)
+    proxy = make_video_proxy(bluelock_amv, tmp_path)
 
     for t in (0.0, 30.0, 60.0):
         _, orig = next(iter(iter_frames(bluelock_amv, 8, 160, 90, start=t, end=t + 1)))

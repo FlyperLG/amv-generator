@@ -18,7 +18,7 @@
 
 | | Path | Content |
 |---|---|---|
-| In | `data/songs/*.{wav,mp3,flac}` or `data/proxies/<amv>_audio.wav` | audio |
+| In | `data/songs/*.{wav,mp3,flac}` or `data/proxies/<video_id>_<settings_id>.wav` (path from `videos.parquet`) | audio |
 | Out | `data/cache/music/<song_id>_dense_v1.npz` | `times[T]`, feature matrix `[T, F_dense]`, feature names |
 | Out | `data/cache/music/<song_id>_beats_v1.parquet` | one row per beat (schema below) |
 

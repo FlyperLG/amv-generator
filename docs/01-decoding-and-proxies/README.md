@@ -37,12 +37,12 @@ Every later step (shot detection, CLIP, optical flow, dataset building) reads th
 |---|---|---|---|
 | 3.1 Probe | ✅ done | `amv/io/ffmpeg.py::probe`, `amv/io/media.py` | `tests/io/test_ffmpeg.py`, `tests/io/test_media.py` |
 | 3.2 Proxy transcode | ✅ done | `amv/io/ffmpeg.py::run_proxy_transcode` | `tests/io/test_proxy.py` |
-| 3.3 Frame reader | ⏭ next | | |
-| 3.4 Audio extraction | open | | |
-| 3.5 Timing printout | partly: transcode measured (see §8); reader throughput needs 3.3 | | |
+| 3.3 Frame reader | ✅ done | `amv/io/ffmpeg.py::iter_frames`, `iter_frame_batches` | `tests/io/test_frames.py` |
+| 3.4 Audio extraction | ⏭ next | | |
+| 3.5 Timing printout | partly: transcode measured (see §8); reader throughput still to measure | | |
 | 3.6 Video table | open | | |
 
-Order: 3.3 → 3.4 → 3.5 → 3.6. The benchmark (3.5) needs the frame reader. The video table (3.6) collects the outputs of all the other tasks, so it comes last.
+Order: 3.4 → 3.5 → 3.6. The benchmark (3.5) needs the frame reader. The video table (3.6) collects the outputs of all the other tasks, so it comes last.
 
 ### 3.1 Probe ✅
 *Implemented as `probe(path) -> MediaInfo` (typed dataclasses instead of a dict).*
@@ -57,7 +57,11 @@ Order: 3.3 → 3.4 → 3.5 → 3.6. The benchmark (3.5) needs the frame reader. 
 - Write to a temp name and rename when finished, so a crash never leaves a half file that looks complete.
 - Skip videos whose proxy already exists **and** whose source mtime/size hasn't changed.
 
-### 3.3 Frame reader (the important API)
+### 3.3 Frame reader (the important API) ✅
+*Implemented as `iter_frames(path, fps, width, height, start=0, end=None, gray=False)` plus `iter_frame_batches(...)`. `start` defaults to 0, not None. `-ss` and `-to` are both **input** options (before `-i`); an input-side `-to` is the absolute end time. Verified frame-accurate on the test clip. There is no ffprobe call: errors are detected from ffmpeg's exit code, with stderr written to a temp file so the pipe cannot deadlock. Measured: one ffprobe call costs ~100 ms on Windows, about as much as decoding a 1 s window, so leaving it out matters for step 04's many short reads.*
+
+*Decisions (see the SPECIFICATION docstring in `tests/io/test_frames.py`): `gray=True` yields 2-D `(h, w)` frames; batches come from a separate `iter_frame_batches(..., batch_size, ...)` that yields `(timestamps[B], frames[B, ...])`; frames are writable; a broken or audio-only file raises `RuntimeError` instead of yielding nothing; there's no timeout.*
+
 `iter_frames(path, fps, width, height, start=None, end=None, gray=False)` should:
 - Launch ffmpeg with `-ss`/`-to` (if given), `-vf fps=<fps>,scale=<w>:<h>`, `-f rawvideo -pix_fmt rgb24` (or `gray`), and output to `pipe:1`.
 - Read exactly `w*h*3` bytes per frame from stdout, and convert each with `np.frombuffer(...).reshape(h, w, 3)`.
@@ -88,8 +92,8 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 
 - [ ] `videos.parquet` has correct duration/fps for the AMV (compare with VLC → Media Information)
 - [x] The proxy's duration matches the original within 1 frame (Blue Lock: 135.869 s vs 135.840 s, 4072 vs 4070 frames; Δ < 1 frame at 29.97 fps)
-- [ ] Frame count from `iter_frames(proxy, fps=8)` ≈ `duration × 8`
-- [ ] Save frames at t = 0, 30, 60 s from the original and the proxy side by side. They should show the same content (no offset)
+- [x] Frame count from `iter_frames(proxy, fps=8)` ≈ `duration × 8` (`test_bluelock_frame_count_at_8_fps`)
+- [x] Frames at t = 0, 30, 60 s from the original and the proxy show the same content, no offset (`test_bluelock_proxy_matches_original`: mean pixel difference < 10)
 - [ ] Reading the proxy is ≥5× faster than reading the original at the same output size
 
 ## 5. Pitfalls

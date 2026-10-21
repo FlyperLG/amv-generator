@@ -45,7 +45,7 @@ def _file_exists(path: str | os.PathLike | Path) -> Path:
     return path
 
 
-def _run_subprocess(command: list[str], timeout: float | None) -> CompletedProcess[str]:
+def run_subprocess(command: list[str], timeout: float | None) -> CompletedProcess[str]:
     """Run a command to completion and capture its output as text.
 
     Args:
@@ -133,7 +133,7 @@ def _run_ffprobe(path: Path) -> dict[str, Any]:
         str(path),
     ]
     try:
-        result = _run_subprocess(command, PROBE_TIMEOUT)
+        result = run_subprocess(command, PROBE_TIMEOUT)
         return json.loads(result.stdout)
     except RuntimeError as e:
         raise RuntimeError(f"ffprobe on path {path} failed with error: {e}") from e
@@ -227,7 +227,7 @@ def _ffmpeg_to_file(
         str(tmp_out_path),
     ]
     try:
-        _run_subprocess(command, timeout)
+        run_subprocess(command, timeout)
         sidecar_data = {
             "source": str(in_path),
             "task": task,

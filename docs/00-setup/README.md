@@ -65,6 +65,7 @@ amv-generator/
     render/ffmpeg_render.py# 06
     eval/metrics.py        # 11
   scripts/                 # CLI entry points per step (preprocess_library.py, ...)
+  benchmarks/              # bench_<step>_<topic>.py; run as `python -m benchmarks.<name>`, output in data/out/bench/
   tests/
   docs/
   data/                    # see project plan §5

@@ -36,6 +36,18 @@ class VideoInfo:
     n_frames: int | None
 
     @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        return cls(
+            duration=data["duration"],
+            fps=Fraction(data["fps"]),
+            is_vfr=data["is_vfr"],
+            width=data["width"],
+            height=data["height"],
+            codec=data["codec"],
+            n_frames=data["n_frames"],
+        )
+
+    @classmethod
     def from_stream(cls, video_stream: dict[str, Any], fallback_duration: float | None = None) -> Self:
         """Create a VideoInfo instance from stream data."""
 
@@ -69,6 +81,15 @@ class AudioInfo:
     codec: str
 
     @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        return cls(
+            duration=data["duration"],
+            sample_rate=data["sample_rate"],
+            channels=data["channels"],
+            codec=data["codec"],
+        )
+
+    @classmethod
     def from_stream(cls, audio_stream: dict[str, Any], fallback_duration: float | None = None) -> Self:
         """Create a AudioInfo instance from stream data."""
         try:
@@ -100,6 +121,15 @@ class MediaInfo:
                     continue
                 return stream
         return None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        return cls(
+            path=Path(data["path"]),
+            container_duration=data["container_duration"],
+            video=VideoInfo.from_dict(data["video"]) if data["video"] is not None else None,
+            audio=AudioInfo.from_dict(data["audio"]) if data["audio"] is not None else None,
+        )
 
     @classmethod
     def from_ffprobe(cls, path: Path, data: dict[str, Any]) -> Self:

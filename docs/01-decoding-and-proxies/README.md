@@ -81,7 +81,7 @@ Typical calls later:
 - `ffmpeg -i amv.mp4 -vn -ac 1 -ar 22050 out.wav`. Step 02 uses this for AMVs; songs in `data/songs/` get the same treatment.
 
 ### 3.5 Timing printout (needs 3.3) ✅
-*Implemented as `benchmarks/bench_01_decoding.py` (in a top-level `benchmarks/` folder, not `scripts/`, which holds pipeline entry points). Run from the repo root: `python -m benchmarks.bench_01_decoding [video] --plot`; `--warmup`/`--repeat` (default 1/5), `--fps`/`--width`/`--height` (8/320/180), `--from-json PATH` re-plots an old run without measuring. Output: a table on stdout plus `data/out/bench/bench_01_decoding_<timestamp>.json` (machine, args, both sources' `MediaInfo`, every repeat's timing, summary) and a `.png` with three panels: × real time, break-even, per-repeat timing.*
+*Implemented as `benchmarks/bench_01_decoding.py` (in a top-level `benchmarks/` folder, not `scripts/`, which holds pipeline entry points). Run from the repo root: `python -m benchmarks.bench_01_decoding [video] --plot`; `--warmup`/`--repeat` (default 1/5), `--fps`/`--width`/`--height` (8/320/180), `--from-json PATH` re-plots an old run without measuring. Output: a table on stdout plus `data/out/bench/bench_01_decoding_<timestamp>.json` (machine, args, both sources' `MediaInfo`, every repeat's timing, summary) and a `.png` with three panels: × real time, break-even, per-repeat timing. The parts later benchmarks reuse are shared modules: `benchmarks/timing.py` (`time_it`, `benchmark`), `results.py` (`BenchResult`, `save_run`/`load_run`, `print_table`), `plots.py` (throughput and per-repeat panels), `machine.py`; tested in `tests/benchmarks/`.*
 
 *Measurement decisions: wall clock via `perf_counter` (ffmpeg is a child process, so `process_time` would miss it); every measured function returns the frame count it processed, and the run fails if that count differs between repeats; the transcode writes into a fresh temp dir every repeat, otherwise the skip rule would measure a file-exists check; results are medians. **Thermal drift:** the CPU is a laptop Alder Lake-P chip that boosts (PL2) for ~10 s and then drops to its sustained limit (PL1). The transcode is the heaviest load (x264 on all threads) and runs first, so its early repeats are fast and later ones up to ~40 % slower; the reads stay within ~5 %. Not a leak (no ffmpeg processes are left behind). Possible improvement: interleave the repeats of the three benchmarks so that all of them see the same thermal state.*
 
@@ -101,7 +101,7 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 - [x] The proxy's duration matches the original within 1 frame (Blue Lock: 135.869 s vs 135.840 s, 4072 vs 4070 frames; Δ < 1 frame at 29.97 fps)
 - [x] Frame count from `iter_frames(proxy, fps=8)` ≈ `duration × 8` (`test_bluelock_frame_count_at_8_fps`)
 - [x] Frames at t = 0, 30, 60 s from the original and the proxy show the same content, no offset (`test_bluelock_proxy_matches_original`: mean pixel difference < 10)
-- [x] Reading the proxy is ≥5× faster than reading the original at the same output size (**7.5×**, see §8)
+- [x] Reading the proxy is ≥5× faster than reading the original at the same output size (**7.3×**, see §8)
 
 ## 5. Pitfalls
 
@@ -113,8 +113,8 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 
 ## 6. CPU budget
 
-- 1080p → 360p proxy: estimated ~3–8× real time; **measured ~25× sustained** (~30× on a cold, boosting CPU; see §8), so a 3-min AMV takes ~7 s and a 24-min episode ~1 min. Plan with the sustained number: an overnight library run is all sustained load.
-- A full read at 8 fps / 320×180 runs at 250× real time from the proxy vs 33× from the original. The proxy pays for itself after **1.6 full reads**, and steps 03, 04 and 09 all read every video.
+- 1080p → 360p proxy: estimated ~3–8× real time; **measured 25–31×** depending on the CPU's boost state (see §8), so a 3-min AMV takes ~7 s and a 24-min episode ~1 min. Plan with ~25×, the sustained number: an overnight library run is all sustained load.
+- A full read at 8 fps / 320×180 runs at ~265× real time from the proxy vs ~36× from the original. The proxy pays for itself after **1.5 full reads**, and steps 03, 04 and 09 all read every video.
 - Do the whole library overnight once; never again.
 
 ## 7. Done when
@@ -128,17 +128,17 @@ Machine: Intel 12th-gen (Alder Lake-P, laptop) CPU, 16 logical cores, Windows 11
 | What | Input | Result |
 |---|---|---|
 | Proxy transcode (3.2), first measurement | Blue Lock AMV, 1920×1080 H.264, 135.8 s, VFR | **4.6 s ≈ 30× real time** (single run, cold CPU); proxy 640×360 CFR 30000/1001, 20 MB (source 60 MB) |
-| Benchmark (3.5), 2026-10-21 | same, `bench_01_decoding.py` defaults: warmup 1, repeat 5, read at 8 fps / 320×180 | see table below |
+| Benchmark (3.5), 2026-10-24 | same, `bench_01_decoding.py` defaults: warmup 1, repeat 5, read at 8 fps / 320×180 | see table below |
 
 | Benchmark | median s | min s | frames | fps | × real time |
 |---|---|---|---|---|---|
-| `proxy_transcode` | 5.46 | 5.12 | 4070 | 746 | 24.9 |
-| `iter_frames_original` | 4.06 | 3.93 | 1087 | 268 | 33.4 |
-| `iter_frames_proxy` | 0.54 | 0.51 | 1087 | 2000 | 250.0 |
+| `proxy_transcode` | 4.96 | 4.36 | 4070 | 820 | 27.4 |
+| `iter_frames_original` | 3.74 | 3.62 | 1087 | 290 | 36.3 |
+| `iter_frames_proxy` | 0.51 | 0.50 | 1087 | 2123 | 265.4 |
 
-- **Proxy read speedup: 7.5×** (target ≥5×). The proxy pays for itself after **1.6 full reads**.
-- Spread across repeats (max − min, relative to the median): transcode 43 % (thermal: +37 % at repeat 4), original read 4 %, proxy read 7 %. The read numbers are solid; the transcode median is a sustained-load value.
+- **Proxy read speedup: 7.3×** (target ≥5×). The proxy pays for itself after **1.5 full reads**.
+- Spread across repeats (max − min, relative to the median): transcode 16 %, original read 6 %, proxy read 5 %. The read numbers are stable across runs. The transcode depends on the CPU's boost state: across runs it measured 25–31× real time, and one earlier run (2026-10-21) had a 43 % spread from thermal throttling (+37 % at its 4th repeat). Plan with ~25×, the sustained value.
 
 ![Benchmark 3.5: throughput in × real time, break-even between reading the original and transcode + reading the proxy, and timing per repeat](img/bench_01_decoding.png)
 
-*Run of 2026-10-21 (`bench_01_decoding_20261021-203955.json`). To update: re-run the benchmark with `--plot`, copy the PNG over `img/bench_01_decoding.png`, and update the table and date above.*
+*Run of 2026-10-24 (`bench_01_decoding_20261024-185739.json`). To update: re-run the benchmark with `--plot`, copy the PNG over `img/bench_01_decoding.png`, and update the table and date above.*

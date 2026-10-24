@@ -64,7 +64,7 @@ Each step has its own folder with a detailed description: goal, inputs/outputs, 
 | # | Step | Output | Phase | Status |
 |---|---|---|---|---|
 | 00 | [Setup](00-setup/README.md) | working env, ffmpeg, repo layout | Foundation | ✅ |
-| 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation | 🚧 3.1–3.5 done (proxy reads 7.5× faster), next: 3.6 video table |
+| 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation | 🚧 3.1–3.5 done (proxy reads 7.3× faster), next: 3.6 video table |
 | 02 | [Music features](02-music-features/README.md) | per-beat feature table | Features |  |
 | 03 | [Shot detection](03-shot-detection/README.md) | shot list per video | Features |  |
 | 04 | [Clip features](04-clip-features/README.md) | clip table with `z_sem`, `z_dyn` | Features |  |
@@ -119,7 +119,7 @@ Reference machine: 16 logical cores, PyTorch eager, ~30–80 GFLOP/s effective.
 
 | Stage | Frequency | Target |
 |---|---|---|
-| 1080p → 360p proxy transcode | once per video | ~3–8× real time (decode is the bottleneck); **measured ~30×** |
+| 1080p → 360p proxy transcode | once per video | ~3–8× real time (decode is the bottleneck); **measured 25–31×** (sustained ~25×) |
 | Shot detection on proxies | once | >10× real time |
 | CLIP ViT-B/32, 1–2 frames per clip | once per library | 30–60 min per 12-episode season |
 | Optical flow 160×90 @ 8 fps | once per library | 5–15 min per season |

@@ -42,9 +42,19 @@ Audio fields
 Errors
   - Stream parsers raise ValueError only (never KeyError / ZeroDivisionError / TypeError).
   - MediaInfo.from_ffprobe re-raises with the file path in the message.
+
+Serialization (from_dict)
+  - VideoInfo / AudioInfo / MediaInfo.from_dict(data) rebuild an object from the output of
+    dataclasses.asdict() after a JSON round trip with json.dump(..., default=str). That
+    turns Path and Fraction into strings, so from_dict converts them back: path -> Path,
+    fps "30000/1001" -> Fraction. A missing (None) video or audio stays None.
+  - Round trip: from_dict(json(asdict(info))) == info, exactly (frozen dataclasses compare
+    by value). Used by benchmarks/ to re-plot saved runs.
+  - from_dict trusts its input (our own JSON): no validation, a missing key may raise KeyError.
 """
 
 import dataclasses
+import json
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -433,3 +443,86 @@ class TestMediaInfo:
 
         with pytest.raises(dataclasses.FrozenInstanceError):
             info.path = Path("other.mp4")  # type: ignore[misc]
+
+
+# =============================================================================
+# from_dict (JSON round trip, used by benchmarks/)
+# =============================================================================
+
+
+def json_round_trip(obj: Any) -> dict[str, Any]:
+    """asdict -> JSON text -> dict, exactly as the benchmark writes and reads its results."""
+    return json.loads(json.dumps(dataclasses.asdict(obj), default=str))
+
+
+class TestFromDict:
+    # --- full round trips, one per real-world file shape ----------------------
+
+    def test_amv_round_trip(self, bluelock_probe):
+        info = MediaInfo.from_ffprobe(AMV_PATH, bluelock_probe)
+
+        assert MediaInfo.from_dict(json_round_trip(info)) == info
+
+    def test_audio_only_round_trip_keeps_video_none(self, song_probe):
+        info = MediaInfo.from_ffprobe(SONG_PATH, song_probe)
+
+        restored = MediaInfo.from_dict(json_round_trip(info))
+
+        assert restored == info
+        assert restored.video is None
+
+    def test_video_only_round_trip_keeps_audio_and_n_frames_none(self, mkv_probe):
+        # MKV: no audio stream and no nb_frames.
+        info = MediaInfo.from_ffprobe(MKV_PATH, mkv_probe)
+
+        restored = MediaInfo.from_dict(json_round_trip(info))
+
+        assert restored == info
+        assert restored.audio is None
+        assert restored.video is not None
+        assert restored.video.n_frames is None
+
+    def test_missing_container_duration_round_trips_as_none(self, bluelock_probe):
+        del bluelock_probe["format"]["duration"]
+        info = MediaInfo.from_ffprobe(AMV_PATH, bluelock_probe)
+
+        assert MediaInfo.from_dict(json_round_trip(info)).container_duration is None
+
+    # --- the types that JSON loses ------------------------------------------
+
+    def test_path_comes_back_as_path(self, bluelock_probe):
+        info = MediaInfo.from_ffprobe(AMV_PATH, bluelock_probe)
+
+        restored = MediaInfo.from_dict(json_round_trip(info))
+
+        assert isinstance(restored.path, Path)
+        assert restored.path == AMV_PATH
+
+    def test_fps_comes_back_as_exact_fraction(self, bluelock_probe):
+        # 30000/1001 must not become the float 29.97: frame math depends on the exact value.
+        info = MediaInfo.from_ffprobe(AMV_PATH, bluelock_probe)
+
+        restored = MediaInfo.from_dict(json_round_trip(info))
+
+        assert restored.video is not None
+        assert type(restored.video.fps) is Fraction
+        assert restored.video.fps == Fraction(30000, 1001)
+
+    def test_vfr_flag_round_trips(self, bluelock_probe):
+        info = MediaInfo.from_ffprobe(AMV_PATH, bluelock_probe)
+        assert info.video is not None
+        vfr_video = dataclasses.replace(info.video, is_vfr=True)
+
+        assert VideoInfo.from_dict(json_round_trip(vfr_video)) == vfr_video
+
+    # --- the stream classes on their own --------------------------------------
+
+    def test_video_info_round_trip(self, bluelock_probe):
+        video = VideoInfo.from_stream(first_stream(bluelock_probe, "video"))
+
+        assert VideoInfo.from_dict(json_round_trip(video)) == video
+
+    def test_audio_info_round_trip(self, song_probe):
+        audio = AudioInfo.from_stream(first_stream(song_probe, "audio"))
+
+        assert AudioInfo.from_dict(json_round_trip(audio)) == audio

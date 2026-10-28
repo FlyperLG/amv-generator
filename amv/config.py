@@ -1,4 +1,5 @@
 import shutil
+from pathlib import Path
 
 
 def _require_tool(name: str) -> str:
@@ -23,3 +24,12 @@ PROXY_CRF = 28
 
 AUDIO_SAMPLE_RATE = 22050
 AUDIO_CHANNELS = 1
+
+VIDEO_EXTENSIONS = frozenset({".mp4", ".mkv"})
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "data"
+AMV_DIR = DATA_DIR / "amvs"
+LIBRARY_DIR = DATA_DIR / "library"
+PROXY_DIR = DATA_DIR / "proxies"
+VIDEO_TABLE_PATH = DATA_DIR / "cache" / "videos.parquet"

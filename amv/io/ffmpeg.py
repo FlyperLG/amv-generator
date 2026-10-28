@@ -25,6 +25,9 @@ from amv.config import (
 )
 from amv.io.media import MediaInfo
 
+logger = logging.getLogger(__name__)
+
+
 # --- Shared helpers -----------------------------------------------------------
 
 
@@ -59,7 +62,15 @@ def run_subprocess(command: list[str], timeout: float | None) -> CompletedProces
         RuntimeError: If the command exits with a non-zero code (the message contains its
             stderr) or exceeds the timeout."""
     try:
-        return subprocess.run(command, capture_output=True, text=True, check=True, timeout=timeout)
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+            timeout=timeout,
+        )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"command failed with error: {e.stderr.strip()}") from e
     except subprocess.TimeoutExpired as e:
@@ -137,9 +148,30 @@ def _run_ffprobe(path: Path) -> dict[str, Any]:
         return json.loads(result.stdout)
     except RuntimeError as e:
         raise RuntimeError(f"ffprobe on path {path} failed with error: {e}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"ffprobe on path {path} returned invalid JSON") from e
 
 
 # --- Cached proxies (video and audio) -----------------------------------------
+
+
+def generate_file_id(path: str | os.PathLike | Path) -> str:
+    """Return the video_id of a source file: a UUID derived from its resolved path.
+
+    The same file always gets the same id, and two files with the same name in different
+    folders get different ones. It is the "<video_uuid>" prefix of every proxy name and
+    the video_id column of videos.parquet. Moving the file (or the data/ folder) changes it.
+
+    Args:
+        path (str | os.PathLike | Path): The source media file.
+
+    Returns:
+        str: The UUID in its canonical 36-character string form.
+
+    Raises:
+        FileNotFoundError: If path does not exist."""
+    path = _file_exists(path).resolve()
+    return _generate_uuid(str(path))
 
 
 def _output_path(in_path: Path, out_dir: Path, suffix: str, ffmpeg_args: list[str]) -> Path:
@@ -161,11 +193,10 @@ def _output_path(in_path: Path, out_dir: Path, suffix: str, ffmpeg_args: list[st
     Raises:
         FileNotFoundError: If in_path does not exist.
         NotADirectoryError: If out_dir exists but is a file."""
-    in_path = _file_exists(in_path).resolve()
     if out_dir.is_file():
         raise NotADirectoryError(f"out_dir needs to be an directory was {out_dir}")
 
-    file_uuid = _generate_uuid(str(in_path))
+    file_uuid = generate_file_id(in_path)
     config_uuid = _generate_uuid(" ".join(ffmpeg_args))
     return out_dir / Path(f"{file_uuid}_{config_uuid}{suffix}")
 
@@ -211,7 +242,7 @@ def _ffmpeg_to_file(
     out_dir.mkdir(exist_ok=True, parents=True)
 
     if final_out_path.is_file() and in_path.stat().st_mtime_ns < final_out_path.stat().st_mtime_ns:
-        logging.info("%s: Skipped %s, cause it already exists.", task, in_path)
+        logger.info("%s: Skipping existing file: %s", task, in_path)
         return final_out_path
 
     command = [
@@ -457,7 +488,7 @@ def iter_frames(
                 if not frame:
                     break
                 if len(frame) != frame_size:
-                    logging.warning("Incomplete frame read from file %s", path)
+                    logger.warning("Incomplete frame read from file %s", path)
                     break
                 frame_array = np.frombuffer(frame, dtype=np.uint8).reshape(frame_shape).copy()
                 timestamp = start + i / fps

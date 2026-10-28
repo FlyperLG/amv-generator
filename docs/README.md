@@ -64,8 +64,8 @@ Each step has its own folder with a detailed description: goal, inputs/outputs, 
 | # | Step | Output | Phase | Status |
 |---|---|---|---|---|
 | 00 | [Setup](00-setup/README.md) | working env, ffmpeg, repo layout | Foundation | ✅ |
-| 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation | 🚧 3.1–3.5 done (proxy reads 7.3× faster), next: 3.6 video table |
-| 02 | [Music features](02-music-features/README.md) | per-beat feature table | Features |  |
+| 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation | ✅ proxy reads 7.3× faster; `python -m scripts.build_video_table` → `data/cache/videos.parquet` |
+| 02 | [Music features](02-music-features/README.md) | per-beat feature table | Features | ⏭ next |
 | 03 | [Shot detection](03-shot-detection/README.md) | shot list per video | Features |  |
 | 04 | [Clip features](04-clip-features/README.md) | clip table with `z_sem`, `z_dyn` | Features |  |
 | 05 | [Retrieval](05-retrieval/README.md) | clip index, scoring, beam search | Baseline |  |
@@ -144,6 +144,8 @@ Rule #3: **decode 1080p once** (all experiments read 360p proxies; only the fina
 | `data/proxies/` | 360p / low-fps proxies | generated, git-ignored. AMV and library proxies share this folder; `data/cache/videos.parquet` (`kind` column) says which is which |
 | `data/cache/` | Features, indices, datasets | generated, git-ignored |
 | `data/out/` | Rendered AMVs, timelines | generated, git-ignored |
+
+**Free test footage for `data/library/`:** the Blender open movies (Sintel, Tears of Steel, Big Buck Bunny, Spring, Sprite Fright, Hero, ...) are Creative Commons Attribution, so they may be cut and remixed if the film is credited. Direct downloads: [download.blender.org/demo/movies](https://download.blender.org/demo/movies/) (e.g. `Sintel.2010.1080p.mkv`, folders `BBB/`, `ToS/`); all films: [studio.blender.org/films](https://studio.blender.org/films/). Put each film in its own folder (`data/library/Sintel/`), trim long end credits, and note film + license in `data/library/CREDITS.md`. Apart from *Hero* (2D), it's 3D or live action: good for testing the pipeline, not for learning an anime look.
 
 **Biggest project risk: training data.** Start collecting AMVs now, while you build steps 00–06. AMVs don't need to match the library's anime, except for val/test; see [step 07 §1](07-dataset-builder/README.md#1-data-collection-start-now-in-parallel-with-steps-0106).
 

@@ -34,7 +34,7 @@ from benchmarks.results import BenchResult, load_run, print_table, save_run
 from benchmarks.timing import benchmark
 
 ORIGINAL_FILE: Path = Path(
-    "data/amvs/Agony Hardstyle (Blue Lock - Turn it into Light! ft. Yoichi Isagi Remix_AMV).mp4"
+    "data/amvs/Agony Hardstyle (Blue Lock - Turn it into Light! ft. Yoichi Isagi Remix⧸AMV) [wXCfJlcHZDs].mp4"
 )
 
 

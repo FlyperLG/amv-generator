@@ -1,4 +1,4 @@
-# Step 01: Decoding & Proxies
+# Step 01: Decoding & Proxies ✅
 
 **Goal:** never decode 1080p more than once. Create low-res, low-fps **proxy** files for all analysis, and a fast frame reader that streams frames into numpy.
 
@@ -42,7 +42,7 @@ Every later step (shot detection, CLIP, optical flow, dataset building) reads th
 | 3.3 Frame reader | ✅ done | `amv/io/ffmpeg.py::iter_frames`, `iter_frame_batches` | `tests/io/test_frames.py` |
 | 3.4 Audio proxy | ✅ done | `amv/io/ffmpeg.py::make_audio_proxy` | `tests/io/test_audio_proxy.py` |
 | 3.5 Timing printout | ✅ done | `benchmarks/bench_01_decoding.py` | (benchmark, no tests) |
-| 3.6 Video table | ⏭ next | | |
+| 3.6 Video table | ✅ done | `amv/io/videos.py::build_video_table`, `scripts/build_video_table.py` | `tests/io/test_videos.py` |
 
 Order: 3.5 → 3.6. The benchmark (3.5) needs the frame reader. The video table (3.6) collects the outputs of all the other tasks, so it comes last.
 
@@ -89,7 +89,10 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 - proxy transcode time and × real time
 - frame reader throughput at 8 fps / 320 px from the **proxy** vs from the **original**
 
-### 3.6 Video table
+### 3.6 Video table ✅
+*Implemented as `build_video_table(amv_dir, library_dir, proxy_dir, out_path) -> pd.DataFrame` in `amv/io/videos.py`; run it with `python -m scripts.build_video_table` (defaults from `amv/config.py`: `AMV_DIR`, `LIBRARY_DIR`, `PROXY_DIR`, `VIDEO_TABLE_PATH`, `VIDEO_EXTENSIONS`). Two phases: discovery finds every `.mp4`/`.mkv` (case-insensitive, sorted, AMVs first), checks that each library file sits in a series folder and probes it, so a bad file fails before any transcode; then the processing loop makes the proxies, one video at a time. Columns as listed below plus `proxy_width`/`proxy_height`, which `iter_frames` needs to read the proxy. Metadata describes the original, not the proxy (the proxy is always CFR H.264 at 640 px). Naming deviations: `video_proxy_path` / `audio_proxy_path`; `fps` is an exact fraction string (`"30000/1001"`), because parquet can't store `Fraction`; `n_frames` is a nullable `Int64`. The parquet file is written to a temp name and then renamed into place. A re-run skips finished proxies but still probes everything (~0.1 s per video); a cache keyed on size + mtime is possible if that ever gets slow.*
+
+*Found on the way: ffmpeg/ffprobe output must be decoded as UTF-8 (`run_subprocess`), since Windows' default cp1252 crashes on non-ASCII file names and metadata (Sintel's subtitle tracks). Scripts call `sys.stdout.reconfigure(encoding="utf-8")` for the same reason. Download AMVs with `yt-dlp -S "vcodec:h264,res:1080,acodec:m4a"`; the default pick is AV1, which is slower to decode on CPU.*
 - For every video in `data/amvs/` and `data/library/`: `probe()` the original, `make_video_proxy()` it, and (AMVs only) extract the wav.
 - Write `data/cache/videos.parquet` with one row per video: `video_id`, **`kind`** (`"amv"` or `"library"`, from the folder it came from), **`series`** (library only: the first sub-folder of `data/library/`, e.g. `data/library/Blue Lock/S01E01.mkv` → `"Blue Lock"`; step 03's clip table needs it), original path and name, proxy path, audio path (or null), duration, fps, `is_vfr`, width, height, n_frames, codec.
 - `data/proxies/` is just a cache keyed by `video_id`; nothing ever lists that folder. Every later step selects videos through this table (`kind == "library"` / `"amv"`), which is why one shared proxy folder is fine.
@@ -97,7 +100,7 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 
 ## 4. Verification
 
-- [ ] `videos.parquet` has correct duration/fps for the AMV (compare with VLC → Media Information)
+- [x] `videos.parquet` has correct duration/fps for the AMV (Blue Lock, re-downloaded as H.264: 132.93 s, 30000/1001, 3984 frames, which is consistent: 3984 / 29.97 = 132.93 s; matches ffprobe)
 - [x] The proxy's duration matches the original within 1 frame (Blue Lock: 135.869 s vs 135.840 s, 4072 vs 4070 frames; Δ < 1 frame at 29.97 fps)
 - [x] Frame count from `iter_frames(proxy, fps=8)` ≈ `duration × 8` (`test_bluelock_frame_count_at_8_fps`)
 - [x] Frames at t = 0, 30, 60 s from the original and the proxy show the same content, no offset (`test_bluelock_proxy_matches_original`: mean pixel difference < 10)

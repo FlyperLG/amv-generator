@@ -25,13 +25,15 @@ Every later step (shot detection, CLIP, optical flow, dataset building) reads th
 | | Path | Format |
 |---|---|---|
 | In | `data/amvs/*.mp4`, `data/library/**/*.mkv|mp4` | original videos |
+| In | `data/songs/**/*.{mp3,wav,flac}` | input songs (task 3.7) |
 | Out | `data/proxies/<video_id>_<settings_id>.mp4` | `PROXY_WIDTH` (640) px wide, even height (640×360 for 16:9), constant frame rate at the source's nominal fps, H.264 `-preset ultrafast -crf 28`, **no audio** (audio comes from the wav below) |
-| Out | `data/proxies/<video_id>_<settings_id>.wav` | AMVs only: `AUDIO_SAMPLE_RATE` (22.05 kHz) mono wav for step 02/07 |
+| Out | `data/proxies/<song_id>_<settings_id>.wav` | `AUDIO_SAMPLE_RATE` (22.05 kHz) mono wav of every AMV and song, for step 02/07. Made by the song table (3.7), not by `build_video_table` |
 | Out | `data/cache/videos.parquet` | one row per video: id, original path, proxy path, duration, fps, width, height, n_frames, codec |
+| Out | `data/cache/songs.parquet` | one row per AMV and song: id, kind, original path, wav path, the original's audio metadata (task 3.7) |
 
 **`video_id`:** never use the raw file name (spaces, brackets, unicode). **Implemented:** `uuid5(NAMESPACE_URL, <resolved absolute path>)`, e.g. `29c61d55-e3db-54b6-8c10-619321a22807`. It is stable for the same file, and two `Episode 01.mkv` files in different folders get different ids. Moving the `data/` folder changes all ids, so proxies would be rebuilt. Keep the original name in `videos.parquet`.
 
-**`settings_id`:** `uuid5` of the ffmpeg arguments that produced the file (shared helper `_ffmpeg_to_file`). Changing any setting in `amv/config.py` (`PROXY_*`, `AUDIO_*`) gives a new file name, so a stale cache is never reused. Old versions stay in `data/proxies/` until deleted by hand. Proxy and wav of the same video share the `video_id` prefix but have different `settings_id`s; later steps get the paths from `videos.parquet`, never by building them.
+**`settings_id`:** `uuid5` of the ffmpeg arguments that produced the file (shared helper `_ffmpeg_to_file`). Changing any setting in `amv/config.py` (`PROXY_*`, `AUDIO_*`) gives a new file name, so a stale cache is never reused. Old versions stay in `data/proxies/` until deleted by hand. Proxy and wav of the same video share the `video_id` prefix but have different `settings_id`s; later steps get the paths from `videos.parquet` (video) or `songs.parquet` (audio), never by building them.
 
 ## 3. Tasks
 
@@ -43,6 +45,7 @@ Every later step (shot detection, CLIP, optical flow, dataset building) reads th
 | 3.4 Audio proxy | ✅ done | `amv/io/ffmpeg.py::make_audio_proxy` | `tests/io/test_audio_proxy.py` |
 | 3.5 Timing printout | ✅ done | `benchmarks/bench_01_decoding.py` | (benchmark, no tests) |
 | 3.6 Video table | ✅ done | `amv/io/videos.py::build_video_table`, `scripts/build_video_table.py` | `tests/io/test_videos.py` |
+| 3.7 Song table | ✅ done | `amv/io/songs.py::build_song_table`, `scripts/build_song_table.py` | `tests/io/test_songs.py` |
 
 Order: 3.5 → 3.6. The benchmark (3.5) needs the frame reader. The video table (3.6) collects the outputs of all the other tasks, so it comes last.
 
@@ -90,13 +93,20 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 - frame reader throughput at 8 fps / 320 px from the **proxy** vs from the **original**
 
 ### 3.6 Video table ✅
-*Implemented as `build_video_table(amv_dir, library_dir, proxy_dir, out_path) -> pd.DataFrame` in `amv/io/videos.py`; run it with `python -m scripts.build_video_table` (defaults from `amv/config.py`: `AMV_DIR`, `LIBRARY_DIR`, `PROXY_DIR`, `VIDEO_TABLE_PATH`, `VIDEO_EXTENSIONS`). Two phases: discovery finds every `.mp4`/`.mkv` (case-insensitive, sorted, AMVs first), checks that each library file sits in a series folder and probes it, so a bad file fails before any transcode; then the processing loop makes the proxies, one video at a time. Columns as listed below plus `proxy_width`/`proxy_height`, which `iter_frames` needs to read the proxy. Metadata describes the original, not the proxy (the proxy is always CFR H.264 at 640 px). Naming deviations: `video_proxy_path` / `audio_proxy_path`; `fps` is an exact fraction string (`"30000/1001"`), because parquet can't store `Fraction`; `n_frames` is a nullable `Int64`. The parquet file is written to a temp name and then renamed into place. A re-run skips finished proxies but still probes everything (~0.1 s per video); a cache keyed on size + mtime is possible if that ever gets slow.*
+*Implemented as `build_video_table(amv_dir, library_dir, proxy_dir, out_path) -> pd.DataFrame` in `amv/io/videos.py`; run it with `python -m scripts.build_video_table` (defaults from `amv/config.py`: `AMV_DIR`, `LIBRARY_DIR`, `PROXY_DIR`, `VIDEO_TABLE_PATH`, `VIDEO_EXTENSIONS`). Two phases: discovery finds every `.mp4`/`.mkv` (case-insensitive, sorted, AMVs first), checks that each library file sits in a series folder and probes it, so a bad file fails before any transcode; then the processing loop makes the proxies, one video at a time. Columns as listed below plus `proxy_width`/`proxy_height`, which `iter_frames` needs to read the proxy. Metadata describes the original, not the proxy (the proxy is always CFR H.264 at 640 px). Naming deviations: `video_proxy_path`; `fps` is an exact fraction string (`"30000/1001"`), because parquet can't store `Fraction`; `n_frames` is a nullable `Int64`. The parquet file is written to a temp name and then renamed into place. A re-run skips finished proxies but still probes everything (~0.1 s per video); a cache keyed on size + mtime is possible if that ever gets slow.*
 
 *Found on the way: ffmpeg/ffprobe output must be decoded as UTF-8 (`run_subprocess`), since Windows' default cp1252 crashes on non-ASCII file names and metadata (Sintel's subtitle tracks). Scripts call `sys.stdout.reconfigure(encoding="utf-8")` for the same reason. Download AMVs with `yt-dlp -S "vcodec:h264,res:1080,acodec:m4a"`; the default pick is AV1, which is slower to decode on CPU.*
 - For every video in `data/amvs/` and `data/library/`: `probe()` the original, `make_video_proxy()` it, and (AMVs only) extract the wav.
-- Write `data/cache/videos.parquet` with one row per video: `video_id`, **`kind`** (`"amv"` or `"library"`, from the folder it came from), **`series`** (library only: the first sub-folder of `data/library/`, e.g. `data/library/Blue Lock/S01E01.mkv` → `"Blue Lock"`; step 03's clip table needs it), original path and name, proxy path, audio path (or null), duration, fps, `is_vfr`, width, height, n_frames, codec.
+- *Changed later:* the wav and the `audio_proxy_path` column moved to the song table (3.7). Each table owns one kind of proxy, and neither needs the other.
+- Write `data/cache/videos.parquet` with one row per video: `video_id`, **`kind`** (`"amv"` or `"library"`, from the folder it came from), **`series`** (library only: the first sub-folder of `data/library/`, e.g. `data/library/Blue Lock/S01E01.mkv` → `"Blue Lock"`; step 03's clip table needs it), original path and name, proxy path, duration, fps, `is_vfr`, width, height, n_frames, codec.
 - `data/proxies/` is just a cache keyed by `video_id`; nothing ever lists that folder. Every later step selects videos through this table (`kind == "library"` / `"amv"`), which is why one shared proxy folder is fine.
 - Process one video at a time (see 3.2), log progress, and re-running it should be cheap: everything already done is skipped.
+
+### 3.7 Song table ✅
+*Added while planning step 02, which needs one list of audio inputs, like steps 03/04 have `videos.parquet`. Implemented as `build_song_table(amv_dir, song_dir, proxy_dir, out_path) -> pd.DataFrame` in `amv/io/songs.py`; run it with `python -m scripts.build_song_table` (defaults: `AMV_DIR`, `SONG_DIR`, `PROXY_DIR`, `SONG_TABLE_PATH`). Same two phases as 3.6: discovery probes every input (AMVs by `VIDEO_EXTENSIONS`, songs by `AUDIO_EXTENSIONS`: `.mp3`/`.wav`/`.flac`), so a file without audio fails before any extraction; then `make_audio_proxy` per file. Columns: `song_id`, `kind` (`"amv"`/`"song"`; same column name as the video table), `path`, `name`, `audio_proxy_path`, and the original's `duration`, `sample_rate`, `channels`, `codec`.*
+- Independent of `videos.parquet`: the two scripts run in either order. An AMV's `song_id` equals its `video_id`, because both come from `generate_file_id`, so steps that need both (07) join on that id: a few hundred rows, ~1 ms.
+- Songs get a wav too, even `.wav` files, because step 02 only reads 22 050 Hz mono and never resamples.
+- `data/songs/` must exist (a missing folder raises, as in 3.6), even while it is empty.
 
 ## 4. Verification
 
@@ -122,7 +132,7 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 
 ## 7. Done when
 
-All videos have proxies plus a `videos.parquet` row, `iter_frames` streams batches correctly, and the benchmark numbers are written down in §8 Measured.
+All videos have proxies plus a `videos.parquet` row, every AMV and song has a wav plus a `songs.parquet` row, `iter_frames` streams batches correctly, and the benchmark numbers are written down in §8 Measured.
 
 ## 8. Measured
 

@@ -9,7 +9,7 @@ from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from amv.config import VIDEO_EXTENSIONS
-from amv.io.ffmpeg import generate_file_id, make_audio_proxy, make_video_proxy, probe
+from amv.io.ffmpeg import generate_file_id, make_video_proxy, probe
 from amv.io.media import VideoInfo
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,6 @@ COLUMNS = [
     "path",
     "name",
     "video_proxy_path",
-    "audio_proxy_path",
     "duration",
     "fps",
     "is_vfr",
@@ -32,7 +31,7 @@ COLUMNS = [
     "proxy_width",
     "proxy_height",
 ]
-type Kind = Literal["amv", "library"]
+type VideoKind = Literal["amv", "library"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +41,7 @@ class VideoFile:
     path: Path  # resolved, absolute
     video_id: str  # generate_file_id(path)
     video: VideoInfo  # probe(path).video, i.e. of the original
-    kind: Kind
+    kind: VideoKind
     series: str | None  # first folder below library_dir; None for AMVs
 
 
@@ -68,7 +67,7 @@ def _discover_valid_files(
             video stream.
         RuntimeError: If ffprobe fails on a file."""
     valid_files: list[VideoFile] = []
-    targets: list[tuple[Path, Kind]] = [(amv_dir, "amv"), (library_dir, "library")]
+    targets: list[tuple[Path, VideoKind]] = [(amv_dir, "amv"), (library_dir, "library")]
     for path, kind in targets:
         for file in tqdm(
             sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS),
@@ -99,14 +98,15 @@ def build_video_table(
 ) -> pd.DataFrame:
     """Make the proxies of every source video and write the video table (step 01, task 3.6).
 
-    Every video gets a video proxy; AMVs also get a wav (library videos don't need one).
-    Work already done is skipped, so a re-run only transcodes new or changed files.
+    Every video gets a video proxy and nothing else: wavs are made by the song table
+    (amv.io.songs), where an AMV's song_id equals its video_id here. Work already done
+    is skipped, so a re-run only transcodes new or changed files.
     Videos are processed one at a time with a progress bar. Later steps select videos
     through this table (kind == "amv" / "library") and never list proxy_dir themselves.
 
     The table has one row per video and these columns (COLUMNS):
         video_id, kind, series, path, name: identity of the original (path is resolved)
-        video_proxy_path, audio_proxy_path: the cached proxies (audio is None for library)
+        video_proxy_path: the cached proxy
         duration, fps, is_vfr, width, height, n_frames, codec: of the original, not the
             proxy; fps is an exact fraction string ("30000/1001"), n_frames a nullable Int64
         proxy_width, proxy_height: the proxy's size, as iter_frames needs it
@@ -151,7 +151,6 @@ def build_video_table(
         for i, file in bar:
             bar.set_postfix_str(file.video_id[:8])
             video_proxy_path = make_video_proxy(file.path, proxy_dir)
-            audio_proxy_path = make_audio_proxy(file.path, proxy_dir) if file.kind == "amv" else None
 
             proxy_media = probe(video_proxy_path)
             assert proxy_media.video is not None  # Should never be None
@@ -162,7 +161,6 @@ def build_video_table(
                 "path": str(file.path),
                 "name": file.path.name,
                 "video_proxy_path": str(video_proxy_path),
-                "audio_proxy_path": str(audio_proxy_path) if audio_proxy_path else None,
                 "duration": file.video.duration,
                 "fps": str(file.video.fps),
                 "is_vfr": file.video.is_vfr,
@@ -175,7 +173,7 @@ def build_video_table(
             }
             data.append(row)
             logger.debug(
-                "[%d/%d] File %s was successfully processed and added to the parquet table.",
+                "[%d/%d] File %s was successfully processed and added to the video parquet table.",
                 i,
                 len(valid_files),
                 file.path.name,

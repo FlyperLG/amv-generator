@@ -17,9 +17,10 @@ DATA_DIR = ROOT / "data"
 
 AMV_DIR = DATA_DIR / "amvs"  # reference AMVs (training data)
 LIBRARY_DIR = DATA_DIR / "library"  # source footage, one sub-folder per series
+SONG_DIR = DATA_DIR / "songs"  # source directory for songs
 PROXY_DIR = DATA_DIR / "proxies"  # generated cache, keyed by video_id
-VIDEO_TABLE_PATH = DATA_DIR / "cache" / "videos.parquet"  # step 01 output, read by every later step
-
+VIDEO_TABLE_PATH = DATA_DIR / "cache" / "videos.parquet"  # step 01 video output, read by every later step
+SONG_TABLE_PATH = DATA_DIR / "cache" / "songs.parquet"  # step 01 song output, read by every later step
 
 # --- External tools -----------------------------------------------------------
 
@@ -42,6 +43,7 @@ FFPROBE = _require_tool("ffprobe")
 # --- Step 01: decoding & proxies ----------------------------------------------
 
 VIDEO_EXTENSIONS = frozenset({".mp4", ".mkv"})  # lowercase; matched case-insensitively
+AUDIO_EXTENSIONS = frozenset({".mp3", ".wav", ".flac"})
 
 PROBE_TIMEOUT: float | None = 10  # seconds per ffprobe call
 

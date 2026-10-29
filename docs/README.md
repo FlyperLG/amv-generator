@@ -64,7 +64,7 @@ Each step has its own folder with a detailed description: goal, inputs/outputs, 
 | # | Step | Output | Phase | Status |
 |---|---|---|---|---|
 | 00 | [Setup](00-setup/README.md) | working env, ffmpeg, repo layout | Foundation | ✅ |
-| 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation | ✅ proxy reads 7.3× faster; `python -m scripts.build_video_table` → `data/cache/videos.parquet` |
+| 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation | ✅ proxy reads 7.3× faster; `python -m scripts.build_video_table` → `data/cache/videos.parquet`, `python -m scripts.build_song_table` → `data/cache/songs.parquet` |
 | 02 | [Music features](02-music-features/README.md) | per-beat feature table | Features | ⏭ next |
 | 03 | [Shot detection](03-shot-detection/README.md) | shot list per video | Features |  |
 | 04 | [Clip features](04-clip-features/README.md) | clip table with `z_sem`, `z_dyn` | Features |  |

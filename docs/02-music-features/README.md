@@ -18,7 +18,7 @@
 
 | | Path | Content |
 |---|---|---|
-| In | `data/songs/*.{wav,mp3,flac}` or `data/proxies/<video_id>_<settings_id>.wav` (path from `videos.parquet`) | audio |
+| In | `data/cache/songs.parquet` ([step 01, task 3.7](../01-decoding-and-proxies/README.md#37-song-table-)): one row per AMV in `data/amvs/` and per file in `data/songs/` | `song_id`, `audio_proxy_path` (22 050 Hz mono wav), the original's audio metadata |
 | Out | `data/cache/music/<song_id>_dense_v1.npz` | `times[T]`, feature matrix `[T, F_dense]`, feature names |
 | Out | `data/cache/music/<song_id>_beats_v1.parquet` | one row per beat (schema below) |
 

@@ -1,14 +1,15 @@
 """Build the video table for step 01 (docs/01-decoding-and-proxies, task 3.6).
 
-Makes a proxy of every video in the AMV and library folders (and a wav of every AMV),
-then writes one row per video to the video table that all later steps read. Finished
-proxies are skipped, so re-running after adding videos only processes the new ones.
+Makes a proxy of every video in the AMV and library folders, then writes one row per
+video to the video table that all later steps read. Finished proxies are skipped,
+so re-running after adding videos only processes the new ones.
 
 Run from the repository root:
     python -m scripts.build_video_table
     python -m scripts.build_video_table -v --library-dir D:/anime
 
-Output: data/cache/videos.parquet, proxies and wavs in data/proxies/.
+Output: data/cache/videos.parquet, proxies in data/proxies/. The AMVs' wavs come from
+scripts/build_song_table.py.
 """
 
 import argparse
@@ -44,7 +45,7 @@ def parse_args(argv: list[str] | None = None) -> Args:
     parser = argparse.ArgumentParser(
         prog="python -m scripts.build_video_table",
         description=(
-            "Make low-res proxies of every AMV and library video (plus a wav per AMV) and "
+            "Make low-res proxies of every AMV and library video and "
             "write the video table that all later steps read. Finished proxies are skipped."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

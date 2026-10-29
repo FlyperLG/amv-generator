@@ -28,7 +28,6 @@ SPECIFICATION
     path               the original, resolved absolute path, as str
     name               the original file name, e.g. "S01E01.mkv"
     video_proxy_path   str, the path make_video_proxy returned; the file exists
-    audio_proxy_path   amv: str, the path make_audio_proxy returned; library: None
     duration, is_vfr, width, height, codec
                        of the ORIGINAL (probe(original).video), not of the proxy
     fps                the original's nominal fps as an exact fraction string,
@@ -39,8 +38,10 @@ SPECIFICATION
                        size of the proxy file, so later steps can call iter_frames
 
   Rules
-  - Library videos get no wav: no audio proxy is made for them, so proxy_dir holds
-    only their .mp4 (+ sidecar). (AMVs need audio for steps 02/07, the library doesn't.)
+  - No wavs are made, not even for AMVs: proxy_dir holds only .mp4 proxies (+ sidecars).
+    (Decision, step 02: audio proxies belong to the song table, amv.io.songs, so
+    neither table depends on the other. Both use generate_file_id, so an AMV's
+    song_id there equals its video_id here.)
   - A library video directly in library_dir (no series folder) raises ValueError
     naming the file, BEFORE any ffmpeg work (nothing is written to proxy_dir).
     (Decision: step 03 needs a series for every clip; failing at the end of a
@@ -74,7 +75,6 @@ COLUMNS = {
     "path",
     "name",
     "video_proxy_path",
-    "audio_proxy_path",
     "duration",
     "fps",
     "is_vfr",
@@ -316,7 +316,7 @@ def test_proxy_size_matches_the_proxy_file(dirs, amv, episode):
         assert (row["proxy_width"], row["proxy_height"]) == (proxy.width, proxy.height) == expected
 
 
-# --- Proxies and audio -------------------------------------------------------------
+# --- Proxies -----------------------------------------------------------------------
 
 
 def test_proxy_paths_exist_and_live_in_proxy_dir(dirs, amv, episode):
@@ -328,19 +328,10 @@ def test_proxy_paths_exist_and_live_in_proxy_dir(dirs, amv, episode):
         assert path.parent.resolve() == dirs["proxy_dir"].resolve()
 
 
-def test_amvs_get_a_wav(dirs, amv):
-    table = build_video_table(**dirs)
+def test_no_wav_is_made(dirs, amv, episode):
+    build_video_table(**dirs)
 
-    wav = row_of(table, amv)["audio_proxy_path"]
-    assert isinstance(wav, str)
-    assert Path(wav).is_file() and Path(wav).suffix == ".wav"
-
-
-def test_library_videos_get_no_wav(dirs, episode):
-    table = build_video_table(**dirs)
-
-    assert row_of(table, episode)["audio_proxy_path"] is None
-    assert list(dirs["proxy_dir"].glob("*.wav")) == []  # not made and then ignored
+    assert list(dirs["proxy_dir"].glob("*.wav")) == []  # audio is the song table's job
 
 
 # --- Failures ----------------------------------------------------------------------

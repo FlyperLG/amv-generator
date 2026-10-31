@@ -38,12 +38,25 @@
 
 ## 3. Tasks
 
-### 3.1 Load
-- Load mono at 22 050 Hz (librosa `load(sr=22050, mono=True)`). Normalise peak or loudness so features are comparable across songs.
+| Task | Status | Code | Tests |
+|---|---|---|---|
+| 3.1 Load | ✅ done | `amv/music/audio.py::load_audio` | `tests/music/test_audio.py` |
+| 3.2 Beats & downbeats | ✅ done | `amv/music/beats.py` | `tests/music/test_beats.py` |
+| 3.3 Dense features | to do | | |
+| 3.4 Smoothing + derivatives | to do | | |
+| 3.5 Section labels | to do | | |
+| 3.6 Plot | to do | | |
 
-### 3.2 Beats & downbeats
+Nothing calls these functions in the pipeline yet: there is no script, and the outputs in section 2 aren't written yet.
+
+### 3.1 Load ✅
+- Load mono at 22 050 Hz (librosa `load(sr=22050, mono=True)`). Normalise peak or loudness so features are comparable across songs.
+- *Implemented as:* the inputs are the rows of `data/cache/songs.parquet`, built in step 01 (task 3.7, `python -m scripts.build_song_table`), which also makes every wav. `amv.music.audio.load_audio` only reads mono wavs at the sample rate passed in (`AUDIO_SAMPLE_RATE`, 22 050 Hz) with `soundfile` (anything else raises) and peak-normalises. Resampling stays in step 01. Spec: `tests/music/test_audio.py`.
+
+### 3.2 Beats & downbeats ✅
 - Use `beat_this` (CPU mode) to get beat and downbeat times. Fallback: `librosa.beat.beat_track` (no downbeats; infer them as every 4th beat starting at the strongest-onset phase).
 - Sanity rules: drop beats with IBI < 0.25 s or > 1.5 s, then interpolate gaps.
+- *Implemented as (measured on Blue Lock):* `beat_this` tracks the 60–90 s breakdown at half tempo (0.68 s instead of 0.34 s), and its downbeats give bars of 1–7 beats. So `clean_beats` drops beats < 0.25 s after the last kept beat, then splits every interval of ≈ n × the median IBI (n ≥ 2) into n parts, capped so no part is shorter than `min_ibi`. This replaces the fixed 1.5 s rule. Known limitation: the median is song-wide, so a real tempo change can be misread as half tempo (0.353 s then 0.6 s turned the slow section into a false 200 BPM), and a song tracked mostly at half tempo stays unrepaired in its faster sections. Switch to a local median if a real song hits this. To keep this from happening silently, a warning is logged if over 5% of the intervals split into parts more than 10% off the median. Measured on 7 proxies: at most 2.1% (Blue Lock), against 40% on a synthetic 1.7x tempo change; no proxy is known to contain a real tempo change, and an exact 2x change is undetectable. Settings are required arguments, passed in from `amv.config` by the caller. `build_beat_grid` treats downbeats as votes: per beat, the bar phase is the majority residue (beat index mod 4) over ±8 bars. Result: a steady 176.5 BPM, and 89/90 bars with 4 beats. Measured on CPU: `detect_beats` ~3 s on the 2:13 song; `clean_beats` + `build_beat_grid` under 15 ms on a synthetic 387-beat grid of the same length. Spec: `tests/music/test_beats.py`.
 
 ### 3.3 Dense features (hop = 512 → ~43 Hz)
 - `rms` (loudness), `onset_strength` (percussive attack), spectral flux, and band energies from a mel spectrogram: low (<200 Hz: kick/bass), mid, high (>4 kHz: hats/snares).
@@ -68,7 +81,7 @@ One figure per song: waveform envelope, `rms_s`, `rms_d2`, beat ticks, downbeat 
 - [ ] Beat ticks line up with the kick when you listen. Use a click-track check: mix short clicks at beat times into the audio, export, listen
 - [ ] Downbeats land on "1" of the bar
 - [ ] In the Blue Lock AMV song (hardstyle): the build-up shows rising `rms_d1`, and the drop shows a clear `rms_d2` spike just before/at the drop
-- [ ] Tempo for hardstyle ≈ 150 BPM (or 75 if the tracker halves it; detect and fix the octave)
+- [x] Tempo of the Blue Lock song ≈ 176 BPM (measured with `beat_this` and librosa; not 150 as first assumed), steady through the half-time breakdown after `clean_beats` (`test_bluelock_tempo_is_steady_after_cleaning`)
 - [ ] Processing a 3-min song takes < 15 s on CPU
 
 ## 5. Pitfalls

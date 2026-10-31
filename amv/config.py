@@ -57,3 +57,11 @@ PROXY_TRANSCODE_TIMEOUT: float | None = 300  # seconds, ~2.5 h of footage at the
 AUDIO_SAMPLE_RATE = 22050  # Hz, librosa's default
 AUDIO_CHANNELS = 1  # mono
 AUDIO_EXTRACTION_TIMEOUT: float | None = 60  # seconds
+
+
+# --- Step 02 music features ---------------------------------------------------
+BEAT_THIS_CHECKPOINT = "final0"
+MIN_IBI = 0.25
+BEATS_PER_BAR = 4
+DOWNBEAT_TOL = 0.07
+DOWNBEAT_WINDOW_BARS = 8

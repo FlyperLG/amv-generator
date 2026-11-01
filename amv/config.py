@@ -60,8 +60,13 @@ AUDIO_EXTRACTION_TIMEOUT: float | None = 60  # seconds
 
 
 # --- Step 02 music features ---------------------------------------------------
-BEAT_THIS_CHECKPOINT = "final0"
-MIN_IBI = 0.25
-BEATS_PER_BAR = 4
-DOWNBEAT_TOL = 0.07
-DOWNBEAT_WINDOW_BARS = 8
+BEAT_THIS_CHECKPOINT = "final0"  # beat_this checkpoint name or path
+MIN_IBI = 0.25  # seconds; a beat closer than this to the last kept beat is dropped
+BEATS_PER_BAR = 4  # beats; the songs are assumed to be in 4/4
+DOWNBEAT_TOL = 0.07  # seconds; a detected downbeat further than this from every beat is ignored
+DOWNBEAT_WINDOW_BARS = 8  # bars each side of a beat that vote on its bar phase
+HOP_LENGTH = 512  # samples between frames, ~43 frames/s at AUDIO_SAMPLE_RATE
+N_FFT = 2048  # samples per analysis window
+N_MELS = 64  # mel bands
+LOW_BAND_HZ = 200  # Hz; mel bands centred below this are "low"
+HIGH_BAND_HZ = 4000  # Hz; mel bands centred above this are "high"

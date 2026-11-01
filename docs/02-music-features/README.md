@@ -42,7 +42,7 @@
 |---|---|---|---|
 | 3.1 Load | ✅ done | `amv/music/audio.py::load_audio` | `tests/music/test_audio.py` |
 | 3.2 Beats & downbeats | ✅ done | `amv/music/beats.py` | `tests/music/test_beats.py` |
-| 3.3 Dense features | to do | | |
+| 3.3 Dense features | ✅ done | `amv/music/dense.py::compute_dense_features` | `tests/music/test_dense.py` |
 | 3.4 Smoothing + derivatives | to do | | |
 | 3.5 Section labels | to do | | |
 | 3.6 Plot | to do | | |
@@ -58,10 +58,11 @@ Nothing calls these functions in the pipeline yet: there is no script, and the o
 - Sanity rules: drop beats with IBI < 0.25 s or > 1.5 s, then interpolate gaps.
 - *Implemented as (measured on Blue Lock):* `beat_this` tracks the 60–90 s breakdown at half tempo (0.68 s instead of 0.34 s), and its downbeats give bars of 1–7 beats. So `clean_beats` drops beats < 0.25 s after the last kept beat, then splits every interval of ≈ n × the median IBI (n ≥ 2) into n parts, capped so no part is shorter than `min_ibi`. This replaces the fixed 1.5 s rule. Known limitation: the median is song-wide, so a real tempo change can be misread as half tempo (0.353 s then 0.6 s turned the slow section into a false 200 BPM), and a song tracked mostly at half tempo stays unrepaired in its faster sections. Switch to a local median if a real song hits this. To keep this from happening silently, a warning is logged if over 5% of the intervals split into parts more than 10% off the median. Measured on 7 proxies: at most 2.1% (Blue Lock), against 40% on a synthetic 1.7x tempo change; no proxy is known to contain a real tempo change, and an exact 2x change is undetectable. Settings are required arguments, passed in from `amv.config` by the caller. `build_beat_grid` treats downbeats as votes: per beat, the bar phase is the majority residue (beat index mod 4) over ±8 bars. Result: a steady 176.5 BPM, and 89/90 bars with 4 beats. Measured on CPU: `detect_beats` ~3 s on the 2:13 song; `clean_beats` + `build_beat_grid` under 15 ms on a synthetic 387-beat grid of the same length. Spec: `tests/music/test_beats.py`.
 
-### 3.3 Dense features (hop = 512 → ~43 Hz)
+### 3.3 Dense features (hop = 512 → ~43 Hz) ✅
 - `rms` (loudness), `onset_strength` (percussive attack), spectral flux, and band energies from a mel spectrogram: low (<200 Hz: kick/bass), mid, high (>4 kHz: hats/snares).
 - Optional: HPSS (harmonic/percussive separation). The percussive part sharpens onsets. It costs ~2× time but is still fast.
 - Convert power to dB, then robust-normalise per song (subtract median, divide by IQR) so a quiet song and a loud song are comparable.
+- *Implemented as (measured on 7 proxies of 133–200 s):* one STFT feeds every feature. HPSS is left out for now, to be added only if the onset curve looks muddy in the 3.6 plot. Only `rms` and the bands go through dB, because `onset` and `flux` are differences with many zeros. A column with an IQR of 0 becomes all zeros. `flux` uses the linear STFT magnitude and gets the same frame shift as `onset_strength` (`1 + n_fft // (2 * hop_length)`); without it, `flux` runs 2 frames (46 ms) ahead of `onset`. It stays, because its correlation with `onset` once aligned is only 0.29–0.67 (0.61 on the 133 s proxy, taken to be Blue Lock from its length). `compute_dense_features` takes 0.12–0.21 s per song on CPU. Normalised `onset` peaks reach 12–49 and `flux` peaks 4–10, against at most 4.1 for `rms` and the bands, so the two attack curves are heavy-tailed. Spec: `tests/music/test_dense.py`.
 
 ### 3.4 Smoothing + derivatives
 - **Savitzky–Golay** filter (`scipy.signal.savgol_filter`) on the dense curves. Window ≈ 1 beat for `_s`, polynomial order 2–3. SG can also return derivatives directly (`deriv=1, 2`), which is cleaner than `np.diff` on smoothed data.

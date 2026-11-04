@@ -43,7 +43,7 @@
 | 3.1 Load | ✅ done | `amv/music/audio.py::load_audio` | `tests/music/test_audio.py` |
 | 3.2 Beats & downbeats | ✅ done | `amv/music/beats.py` | `tests/music/test_beats.py` |
 | 3.3 Dense features | ✅ done | `amv/music/dense.py::compute_dense_features` | `tests/music/test_dense.py` |
-| 3.4 Smoothing + derivatives | to do | | |
+| 3.4 Smoothing + derivatives | ✅ done | `amv/music/dynamics.py` | `tests/music/test_dynamics.py` |
 | 3.5 Section labels | to do | | |
 | 3.6 Plot | to do | | |
 
@@ -64,10 +64,11 @@ Nothing calls these functions in the pipeline yet: there is no script, and the o
 - Convert power to dB, then robust-normalise per song (subtract median, divide by IQR) so a quiet song and a loud song are comparable.
 - *Implemented as (measured on 7 proxies of 133–200 s):* one STFT feeds every feature. HPSS is left out for now, to be added only if the onset curve looks muddy in the 3.6 plot. Only `rms` and the bands go through dB, because `onset` and `flux` are differences with many zeros. A column with an IQR of 0 becomes all zeros. `flux` uses the linear STFT magnitude and gets the same frame shift as `onset_strength` (`1 + n_fft // (2 * hop_length)`); without it, `flux` runs 2 frames (46 ms) ahead of `onset`. It stays, because its correlation with `onset` once aligned is only 0.29–0.67 (0.61 on the 133 s proxy, taken to be Blue Lock from its length). `compute_dense_features` takes 0.12–0.21 s per song on CPU. Normalised `onset` peaks reach 12–49 and `flux` peaks 4–10, against at most 4.1 for `rms` and the bands, so the two attack curves are heavy-tailed. Spec: `tests/music/test_dense.py`.
 
-### 3.4 Smoothing + derivatives
+### 3.4 Smoothing + derivatives ✅
 - **Savitzky–Golay** filter (`scipy.signal.savgol_filter`) on the dense curves. Window ≈ 1 beat for `_s`, polynomial order 2–3. SG can also return derivatives directly (`deriv=1, 2`), which is cleaner than `np.diff` on smoothed data.
 - Pool dense → beat by averaging over each beat interval (and max for `onset`).
 - Compute `_d1`, `_d2` at **beat level** too (on the smoothed beat series). These are what the dynamics model sees.
+- *Implemented as:* the **raw** dense curves are pooled, not the smoothed ones, because averaging over a beat already smooths over one beat. `smooth_dense` makes the dense `_s` curves only, for the npz, the 3.6 plot and step 07; it uses polyorder 2 and the odd window nearest to `DENSE_SG_WINDOW_BEATS` (1.0) × the median IBI in frames, 15 frames at Blue Lock's 176 BPM. `pool_to_beats` gives beat *i* the frames in [t_i, t_{i+1}). The last beat gets one more interval as long as the previous one, not the time up to the song end, so an outro after the last beat isn't averaged in. A beat with no frame takes its nearest frame. The pooling uses `np.add.reduceat` / `np.maximum.reduceat`, with no Python loop. `beat_dynamics` runs SG on the pooled series with `BEAT_SG_WINDOW` = 5 beats and polyorder 2, using `mode="interp"` and `delta=1`. So `_d1`/`_d2` are **per beat, not per second**, and don't change with tempo. Measured on CPU for a 3-min song (7750 frames, 530 beats, synthetic): `pool_to_beats` 0.11 ms (the loop version took 2.1 ms), the whole of 3.4 1.5 ms. Not checked yet: whether `rms_d2` looks smooth rather than white noise (the pitfall in section 5). That needs the 3.6 plot. Spec: `tests/music/test_dynamics.py`.
 
 ### 3.5 Section labels (heuristic, the "plan" tokens)
 - Bar-level energy (mean `rms_s` per bar), then a novelty curve (self-similarity of MFCC/chroma per bar, `librosa.segment` utilities), then boundaries at novelty peaks snapped to downbeats, typically every 8 or 16 bars.

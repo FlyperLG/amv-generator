@@ -70,3 +70,6 @@ N_FFT = 2048  # samples per analysis window
 N_MELS = 64  # mel bands
 LOW_BAND_HZ = 200  # Hz; mel bands centred below this are "low"
 HIGH_BAND_HZ = 4000  # Hz; mel bands centred above this are "high"
+SG_POLYORDER = 2  # Savitzky–Golay polynomial order, dense and beat level
+DENSE_SG_WINDOW_BEATS = 1.0  # beats; dense SG window ≈ this many beats in frames
+BEAT_SG_WINDOW = 5  # beats; SG window on the pooled beat series (odd)

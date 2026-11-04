@@ -60,12 +60,14 @@ def pool_to_beats(
     Beat i owns the frames at times t with beat_times[i] <= t < beat_times[i + 1]. The last
     beat owns one more interval as long as the one before it, clipped to the frames that
     exist; frames before the first beat belong to no beat. A beat that owns no frame takes
-    the frame nearest to its time, so the result never contains NaN.
+    the frame nearest to its time, so the result never contains NaN. Passing the downbeat
+    times instead pools per bar, which is how the timbre features are pooled for sections.
 
     Args:
-        dense (DenseFeatures): The raw (unsmoothed) dense curves, which must include "onset".
+        dense (DenseFeatures): The raw (unsmoothed) curves. An "onset" column, if there is
+            one, takes the max; every other column the mean. Not modified.
+        beat_times (np.ndarray): The sorted beat (or downbeat) times in seconds, shape [B].
             Not modified.
-        beat_times (np.ndarray): The sorted beat times in seconds, shape [B]. Not modified.
 
     Returns:
         np.ndarray: The pooled features, shape [B, F], columns in dense.names order.
@@ -90,8 +92,9 @@ def pool_to_beats(
 
     sums = np.add.reduceat(padded, idx, axis=0)[0::2]
     pooled = sums / np.maximum(counts, 1)[:, None]  # empty rows are fixed below
-    onset_col = dense.names.index("onset")
-    pooled[:, onset_col] = np.maximum.reduceat(padded[:, onset_col], idx)[0::2]
+    if "onset" in dense.names:
+        onset_col = dense.names.index("onset")
+        pooled[:, onset_col] = np.maximum.reduceat(padded[:, onset_col], idx)[0::2]
 
     # empty beat -> nearest frame, which is start - 1 or start
     empty = counts == 0

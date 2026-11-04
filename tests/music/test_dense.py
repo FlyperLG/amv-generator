@@ -32,16 +32,39 @@ SPECIFICATION
   - A column with an IQR of 0 becomes all zeros (Decision: its spikes can't be put on the
     scale, and they must not become inf or a huge number). This is not exotic: a mostly
     silent signal has an IQR of 0 in spite of its spikes. No numpy warning is raised.
+
+  compute_timbre_features(y, sample_rate, hop_length, n_fft, n_mels, n_mfcc) -> DenseFeatures
+    (config: N_MFCC = 13; task 3.5 pools these per bar to find section boundaries)
+  - A separate DenseFeatures, not extra columns of compute_dense_features (Decision: only
+    the section finder uses them, and as extra columns they would go through the robust
+    normalisation, smoothing and beat table meant for the 6 energy curves).
+  - Same frames as compute_dense_features: identical times, T = 1 + len(y) // hop_length.
+  - values [T, (n_mfcc - 1) + 12], NOT normalised (3.5 z-scores them per bar).
+  - names, in column order:
+      mfcc_1 .. mfcc_{n_mfcc-1}   librosa.feature.mfcc of the log-mel spectrogram (n_mels
+                                  bands), with coefficient 0 dropped (Decision: it is the
+                                  overall loudness, which 3.5 handles through rms instead).
+                                  Numbered like librosa's rows, so mfcc_1 is row 1.
+      chroma_C, chroma_C#, chroma_D, chroma_D#, chroma_E, chroma_F, chroma_F#, chroma_G,
+      chroma_G#, chroma_A, chroma_A#, chroma_B
+                                  librosa.feature.chroma_stft of the power spectrogram, rows
+                                  in librosa's order (row 0 is C). Each frame is scaled so
+                                  its largest pitch class is 1, so the values are in [0, 1].
+  - chroma uses tuning=0.0 (Decision: librosa's tuning estimate takes ~320 ms of a ~450 ms
+    call on a 3-min song, and a song-wide tuning offset doesn't move section boundaries).
+  - Because mfcc_0 is dropped and chroma is scaled per frame, a quiet and a loud copy give
+    the same values. y is not modified.
 """
 
 import dataclasses
+import time
 import warnings
 
 import numpy as np
 import pytest
 
 from amv.music.audio import load_audio
-from amv.music.dense import DenseFeatures, compute_dense_features
+from amv.music.dense import DenseFeatures, compute_dense_features, compute_timbre_features
 
 SR = 22050
 HOP = 512
@@ -281,6 +304,129 @@ def test_zero_iqr_raises_no_numpy_warning(mostly_silent):
         features(mostly_silent)
 
 
+# --- Timbre features --------------------------------------------------------------
+
+N_MFCC = 13
+PITCHES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+TIMBRE_NAMES = (*(f"mfcc_{k}" for k in range(1, N_MFCC)), *(f"chroma_{p}" for p in PITCHES))
+
+
+def timbre(y, sample_rate=SR, hop_length=HOP, n_fft=N_FFT, n_mels=N_MELS, n_mfcc=N_MFCC):
+    return compute_timbre_features(y, sample_rate, hop_length, n_fft, n_mels, n_mfcc)
+
+
+def chroma_of(feats):
+    """[T, 12] chroma block, by name."""
+    return np.stack([column(feats, f"chroma_{p}") for p in PITCHES], axis=1)
+
+
+def test_timbre_returns_dense_features(drum_loop):
+    y, _ = drum_loop()
+
+    assert isinstance(timbre(y), DenseFeatures)
+
+
+def test_timbre_names_are_mfcc_1_up_then_the_twelve_pitch_classes(drum_loop):
+    y, _ = drum_loop()
+
+    assert tuple(timbre(y).names) == TIMBRE_NAMES
+
+
+def test_timbre_n_mfcc_sets_the_number_of_mfcc_columns(drum_loop):
+    y, _ = drum_loop()
+
+    feats = timbre(y, n_mfcc=20)
+
+    assert tuple(feats.names)[:19] == tuple(f"mfcc_{k}" for k in range(1, 20))
+    assert feats.values.shape[1] == 19 + 12
+
+
+def test_timbre_uses_the_same_frames_as_the_dense_features(drum_loop):
+    y, _ = drum_loop()
+
+    feats = timbre(y)
+
+    np.testing.assert_array_equal(feats.times, features(y).times)
+    assert feats.values.shape == (1 + len(y) // HOP, len(TIMBRE_NAMES))
+
+
+def test_timbre_does_not_modify_the_signal(drum_loop):
+    y, _ = drum_loop()
+    original = y.copy()
+
+    timbre(y)
+
+    np.testing.assert_array_equal(y, original)
+
+
+@pytest.mark.parametrize(
+    ("freq", "pitch"),
+    [(261.63, "C"), (329.63, "E"), (440.0, "A"), (493.88, "B"), (880.0, "A")],
+)
+def test_timbre_chroma_names_the_pitch_of_a_tone(freq, pitch):
+    """880 Hz is A an octave up: chroma folds octaves together."""
+    feats = timbre(tone(freq, seconds=2.0))
+
+    middle = chroma_of(feats)[20:-20].mean(axis=0)
+
+    assert PITCHES[int(np.argmax(middle))] == pitch, dict(zip(PITCHES, middle.round(2)))
+
+
+def test_timbre_chroma_is_scaled_per_frame_not_normalised():
+    """Raw chroma_stft: every frame's largest pitch class is 1. A robust-normalised column
+    would have median 0 and go negative."""
+    y = np.random.default_rng(0).standard_normal(3 * SR).astype(np.float32)
+
+    chroma = chroma_of(timbre(y))
+
+    assert chroma.min() >= 0.0
+    np.testing.assert_allclose(chroma.max(axis=1), 1.0, atol=1e-6)
+
+
+def test_timbre_mfcc_1_tells_a_low_from_a_high_sound():
+    """mfcc_1 measures spectral tilt: high for a dark sound, low for a bright one."""
+    feats = timbre(np.concatenate([tone(100, seconds=1.0), tone(6000, seconds=1.0)]))
+
+    assert mean_between(feats, "mfcc_1", 0.2, 0.8) > mean_between(feats, "mfcc_1", 1.2, 1.8)
+
+
+def test_timbre_a_quiet_and_a_loud_copy_give_the_same_values(drum_loop):
+    """Only mfcc_0 depends on the gain, and it is dropped. Noise floor: see the dense test."""
+    y, _ = drum_loop()
+    y = y + 1e-3 * np.random.default_rng(0).standard_normal(len(y)).astype(np.float32)
+
+    loud = timbre(y).values
+    quiet = timbre(0.1 * y).values
+
+    np.testing.assert_allclose(quiet, loud, atol=1e-2)
+
+
+def test_timbre_values_are_finite(mostly_silent):
+    assert np.isfinite(timbre(mostly_silent).values).all()
+
+
+def test_timbre_skips_the_tuning_estimate():
+    """With tuning=0.0, MFCC + chroma cost little next to the STFT itself; librosa's tuning
+    estimate alone takes ~3x the STFT. Best of 3, so a busy machine doesn't fail it."""
+    import librosa
+
+    y = np.random.default_rng(0).standard_normal(120 * SR).astype(np.float32)
+    timbre(y)  # warm-up: librosa compiles and caches on the first call
+
+    def best_of_3(f):
+        best = np.inf
+        for _ in range(3):
+            start = time.perf_counter()
+            f()
+            best = min(best, time.perf_counter() - start)
+        return best
+
+    stft = best_of_3(lambda: librosa.stft(y, n_fft=N_FFT, hop_length=HOP))
+    full = best_of_3(lambda: timbre(y))
+
+    assert full < 3 * stft, f"timbre {full * 1000:.0f} ms vs stft {stft * 1000:.0f} ms"
+
+
 # --- Config -----------------------------------------------------------------------
 
 
@@ -292,6 +438,7 @@ def test_config_has_the_planned_settings():
     assert config.N_MELS == N_MELS
     assert config.LOW_BAND_HZ == LOW_HZ
     assert config.HIGH_BAND_HZ == HIGH_HZ
+    assert config.N_MFCC == N_MFCC
 
 
 # --- Real song (integration) ------------------------------------------------------

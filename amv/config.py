@@ -73,3 +73,4 @@ HIGH_BAND_HZ = 4000  # Hz; mel bands centred above this are "high"
 SG_POLYORDER = 2  # Savitzky–Golay polynomial order, dense and beat level
 DENSE_SG_WINDOW_BEATS = 1.0  # beats; dense SG window ≈ this many beats in frames
 BEAT_SG_WINDOW = 5  # beats; SG window on the pooled beat series (odd)
+N_MFCC = 13  # MFCCs computed; mfcc_0 (loudness) is dropped

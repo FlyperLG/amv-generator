@@ -276,6 +276,16 @@ def test_pool_needs_at_least_two_beats(beat_times):
         pool_to_beats(frame_index_dense(), beat_times)
 
 
+def test_pool_without_onset_takes_the_mean_everywhere():
+    """3.5 pools the timbre features (no onset column) per bar with the same function."""
+    names = ("mfcc_1", "mfcc_2", "chroma_C")
+
+    pooled = pool_to_beats(frame_index_dense(names=names), np.array([0.25, 0.55, 1.05]))
+
+    for j in range(len(names)):
+        np.testing.assert_allclose(pooled[:, j], [4.0, 8.0, 13.0], err_msg=names[j])
+
+
 def test_pool_does_not_modify_inputs():
     dense = frame_index_dense()
     beat_times = np.array([0.25, 0.55, 1.05])

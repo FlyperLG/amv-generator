@@ -44,7 +44,7 @@
 | 3.2 Beats & downbeats | ✅ done | `amv/music/beats.py` | `tests/music/test_beats.py` |
 | 3.3 Dense features | ✅ done | `amv/music/dense.py::compute_dense_features` | `tests/music/test_dense.py` |
 | 3.4 Smoothing + derivatives | ✅ done | `amv/music/dynamics.py` | `tests/music/test_dynamics.py` |
-| 3.5 Section labels | to do | | |
+| 3.5 Section labels | in progress: timbre features done | `amv/music/dense.py::compute_timbre_features` | `tests/music/test_dense.py` |
 | 3.6 Plot | to do | | |
 
 Nothing calls these functions in the pipeline yet: there is no script, and the outputs in section 2 aren't written yet.

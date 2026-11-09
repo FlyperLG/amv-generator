@@ -70,6 +70,7 @@ from amv.music.dense import DenseFeatures
 from amv.music.dynamics import beat_dynamics, pool_to_beats, smooth_dense
 
 NAMES = ("rms", "onset", "flux", "low", "mid", "high")
+N_FEATURES = len(NAMES)
 
 
 def make_dense(values, frame_period=0.1, names=NAMES):
@@ -94,7 +95,7 @@ def reference_pool(dense, beat_times):
     times, values = dense.times, dense.values
     ends = np.append(beat_times[1:], 2 * beat_times[-1] - beat_times[-2])
     out = np.empty((len(beat_times), values.shape[1]))
-    for i, (start, end) in enumerate(zip(beat_times, ends)):
+    for i, (start, end) in enumerate(zip(beat_times, ends, strict=True)):
         inside = (times >= start) & (times < end)
         frames = values[inside] if inside.any() else values[[np.argmin(np.abs(times - start))]]
         for j, name in enumerate(dense.names):
@@ -166,7 +167,9 @@ def test_smooth_leaves_a_parabola_unchanged_including_the_edges():
         (0.02, 0.07, 1.0, 3, 5),  # 3.5 frames: nearest odd is 3, but 3 is not > polyorder 3
     ],
 )
-def test_smooth_window_is_about_window_beats_in_frames(frame_period, beat_period, window_beats, polyorder, window):
+def test_smooth_window_is_about_window_beats_in_frames(
+    frame_period, beat_period, window_beats, polyorder, window
+):
     rng = np.random.default_rng(1)
     dense = make_dense(rng.standard_normal((500, len(NAMES))), frame_period=frame_period)
 
@@ -302,7 +305,7 @@ def test_pool_does_not_modify_inputs():
 # =================================================================================
 
 
-def pooled_from(column, n_features=len(NAMES)):
+def pooled_from(column, n_features=N_FEATURES):
     """The same 1-D series in every column."""
     return np.repeat(np.asarray(column, dtype=np.float64)[:, None], n_features, axis=1)
 
@@ -469,7 +472,9 @@ def test_bluelock_chain_gives_one_finite_row_per_beat(beat_model, bluelock_wav):
         y, sr, config.HOP_LENGTH, config.N_FFT, config.N_MELS, config.LOW_BAND_HZ, config.HIGH_BAND_HZ
     )
 
-    smoothed = smooth_dense(dense, float(np.median(np.diff(beats))), config.DENSE_SG_WINDOW_BEATS, config.SG_POLYORDER)
+    smoothed = smooth_dense(
+        dense, float(np.median(np.diff(beats))), config.DENSE_SG_WINDOW_BEATS, config.SG_POLYORDER
+    )
     out = beat_dynamics(pool_to_beats(dense, beats), dense.names, config.BEAT_SG_WINDOW, config.SG_POLYORDER)
 
     assert smoothed.values.shape == dense.values.shape

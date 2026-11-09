@@ -369,7 +369,7 @@ def test_timbre_chroma_names_the_pitch_of_a_tone(freq, pitch):
 
     middle = chroma_of(feats)[20:-20].mean(axis=0)
 
-    assert PITCHES[int(np.argmax(middle))] == pitch, dict(zip(PITCHES, middle.round(2)))
+    assert PITCHES[int(np.argmax(middle))] == pitch, dict(zip(PITCHES, middle.round(2), strict=True))
 
 
 def test_timbre_chroma_is_scaled_per_frame_not_normalised():

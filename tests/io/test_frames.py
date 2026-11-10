@@ -46,6 +46,7 @@ import subprocess
 import numpy as np
 import pytest
 
+from amv.config import DECODING
 from amv.io.ffmpeg import iter_frames, probe
 
 pytestmark = pytest.mark.integration  # every test here runs the real ffmpeg
@@ -299,7 +300,7 @@ def test_audio_only_file_raises(make_media):
 
 
 def test_bluelock_frame_count_at_8_fps(bluelock_amv):
-    duration = probe(bluelock_amv).video.duration
+    duration = probe(bluelock_amv, DECODING.probe_timeout).video.duration
 
     n = sum(1 for _ in iter_frames(bluelock_amv, 8, 160, 90))
 
@@ -310,7 +311,7 @@ def test_bluelock_proxy_matches_original(bluelock_amv, tmp_path):
     # Same content at the same timestamp in the original and the proxy (no time offset).
     from amv.io.ffmpeg import make_video_proxy
 
-    proxy = make_video_proxy(bluelock_amv, tmp_path)
+    proxy = make_video_proxy(bluelock_amv, tmp_path, DECODING.video_proxy)
 
     for t in (0.0, 30.0, 60.0):
         _, orig = next(iter(iter_frames(bluelock_amv, 8, 160, 90, start=t, end=t + 1)))

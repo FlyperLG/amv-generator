@@ -2,8 +2,7 @@ import os
 import platform
 from typing import Any
 
-from amv.config import FFMPEG
-from amv.io.ffmpeg import run_subprocess
+from amv.io.ffmpeg import FFMPEG, run_subprocess
 
 
 def get_machine_information() -> dict[str, Any]:

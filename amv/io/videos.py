@@ -8,7 +8,7 @@ import pandas as pd
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from amv.config import VIDEO_EXTENSIONS
+from amv.config import DecodingSettings
 from amv.io.ffmpeg import generate_file_id, make_video_proxy, probe
 from amv.io.media import VideoInfo
 
@@ -48,16 +48,20 @@ class VideoFile:
 def _discover_valid_files(
     amv_dir: Path,
     library_dir: Path,
+    extensions: frozenset[str],
+    probe_timeout: float | None,
 ) -> list[VideoFile]:
     """Find, check and probe every video below amv_dir and library_dir.
 
     Runs before any ffmpeg work, so that a bad file stops the run before hours of
-    transcoding instead of after them. Files whose suffix is in VIDEO_EXTENSIONS
+    transcoding instead of after them. Files whose suffix is in extensions
     (case-insensitive) are found at any depth; everything else is ignored.
 
     Args:
         amv_dir (Path): The folder with the reference AMVs.
         library_dir (Path): The folder with the source footage, one sub-folder per series.
+        extensions (frozenset[str]): The lowercase video suffixes, with the dot.
+        probe_timeout (float | None): Seconds per ffprobe call, or None to wait forever.
 
     Returns:
         list[VideoFile]: All AMVs, then all library videos, each sorted by path.
@@ -70,7 +74,7 @@ def _discover_valid_files(
     targets: list[tuple[Path, VideoKind]] = [(amv_dir, "amv"), (library_dir, "library")]
     for path, kind in targets:
         for file in tqdm(
-            sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS),
+            sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in extensions),
             desc=f"Probing ({kind})",
             unit="file",
             dynamic_ncols=True,
@@ -82,7 +86,7 @@ def _discover_valid_files(
                 if len(relative_file_parts) <= 1:
                     raise ValueError(f"Library file is not inside a series folder: {file}")
                 series = relative_file_parts[0]
-            media = probe(file)
+            media = probe(file, probe_timeout)
             if media.video is None:
                 raise ValueError(f"Got file with no video stream: {file}")
             video_id = generate_file_id(file)
@@ -95,6 +99,7 @@ def build_video_table(
     library_dir: str | os.PathLike,
     proxy_dir: str | os.PathLike,
     out_path: str | os.PathLike,
+    settings: DecodingSettings,
 ) -> pd.DataFrame:
     """Make the proxies of every source video and write the video table (step 01, task 3.6).
 
@@ -118,6 +123,8 @@ def build_video_table(
         proxy_dir (str | os.PathLike): The proxy cache; created if missing.
         out_path (str | os.PathLike): The parquet file to write; its folder is created if
             missing. It is written to a temp name first, so it is never left half-written.
+        settings (DecodingSettings): Step 01's settings: video_extensions, probe_timeout
+            and video_proxy are used.
 
     Returns:
         pd.DataFrame: The table, exactly as written to out_path.
@@ -137,7 +144,9 @@ def build_video_table(
     if not library_dir.exists():
         raise FileNotFoundError(f"Input library directory does not exist: {library_dir}")
 
-    valid_files = _discover_valid_files(amv_dir, library_dir)
+    valid_files = _discover_valid_files(
+        amv_dir, library_dir, settings.video_extensions, settings.probe_timeout
+    )
     data: list[dict[str, Any]] = []
     with logging_redirect_tqdm():
         bar = tqdm(
@@ -150,9 +159,9 @@ def build_video_table(
         )
         for i, file in bar:
             bar.set_postfix_str(file.video_id[:8])
-            video_proxy_path = make_video_proxy(file.path, proxy_dir)
+            video_proxy_path = make_video_proxy(file.path, proxy_dir, settings.video_proxy)
 
-            proxy_media = probe(video_proxy_path)
+            proxy_media = probe(video_proxy_path, settings.probe_timeout)
             assert proxy_media.video is not None  # Should never be None
             row = {
                 "video_id": file.video_id,

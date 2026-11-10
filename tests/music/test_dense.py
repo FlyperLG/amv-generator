@@ -8,7 +8,8 @@ private. Names are compared as tuples, so names may be a list or a tuple.
 SPECIFICATION
   Settings are required arguments (Decision: dense.py does not read amv.config; the entry
   point reads the values from config and passes them in).
-  (config: HOP_LENGTH = 512, N_FFT = 2048, N_MELS = 64, LOW_BAND_HZ = 200, HIGH_BAND_HZ = 4000)
+  (config: MUSIC.hop_length = 512, MUSIC.n_fft = 2048, MUSIC.n_mels = 64,
+           MUSIC.low_band_hz = 200, MUSIC.high_band_hz = 4000)
 
   DenseFeatures: frozen dataclass
     times   [T]     float  the centre of each frame in seconds, frame * hop_length / sr
@@ -34,7 +35,7 @@ SPECIFICATION
     silent signal has an IQR of 0 in spite of its spikes. No numpy warning is raised.
 
   compute_timbre_features(y, sample_rate, hop_length, n_fft, n_mels, n_mfcc) -> DenseFeatures
-    (config: N_MFCC = 13; task 3.5 pools these per bar to find section boundaries)
+    (config: MUSIC.n_mfcc = 13; task 3.5 pools these per bar to find section boundaries)
   - A separate DenseFeatures, not extra columns of compute_dense_features (Decision: only
     the section finder uses them, and as extra columns they would go through the robust
     normalisation, smoothing and beat table meant for the 6 energy curves).
@@ -433,12 +434,12 @@ def test_timbre_skips_the_tuning_estimate():
 def test_config_has_the_planned_settings():
     import amv.config as config
 
-    assert config.HOP_LENGTH == HOP
-    assert config.N_FFT == N_FFT
-    assert config.N_MELS == N_MELS
-    assert config.LOW_BAND_HZ == LOW_HZ
-    assert config.HIGH_BAND_HZ == HIGH_HZ
-    assert config.N_MFCC == N_MFCC
+    assert config.MUSIC.hop_length == HOP
+    assert config.MUSIC.n_fft == N_FFT
+    assert config.MUSIC.n_mels == N_MELS
+    assert config.MUSIC.low_band_hz == LOW_HZ
+    assert config.MUSIC.high_band_hz == HIGH_HZ
+    assert config.MUSIC.n_mfcc == N_MFCC
 
 
 # --- Real song (integration) ------------------------------------------------------

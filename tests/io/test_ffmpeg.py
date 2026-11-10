@@ -4,7 +4,8 @@ Tests marked `integration` call the real ffmpeg/ffprobe binaries.
 Run only the fast unit tests with:  pytest -m "not integration"
 
 SPECIFICATION
-  - probe(path) accepts str or PathLike and returns a MediaInfo.
+  - probe(path, timeout) accepts str or PathLike and returns a MediaInfo. timeout is
+    required (the entry point passes DECODING.probe_timeout).
   - Missing file -> FileNotFoundError (checked before calling ffprobe).
   - File ffprobe cannot read -> RuntimeError whose message mentions "ffprobe".
   - probe() has no side effects (writes no files).
@@ -18,6 +19,7 @@ from fractions import Fraction
 
 import pytest
 
+from amv.config import DECODING
 from amv.io.ffmpeg import probe
 from amv.io.media import MediaInfo
 
@@ -25,7 +27,7 @@ from amv.io.media import MediaInfo
 def test_probe_missing_file_raises(tmp_path):
     # tmp_path is a built-in pytest fixture: a fresh empty directory per test.
     with pytest.raises(FileNotFoundError):
-        probe(tmp_path / "does_not_exist.mp4")
+        probe(tmp_path / "does_not_exist.mp4", DECODING.probe_timeout)
 
 
 @pytest.mark.integration
@@ -34,14 +36,14 @@ def test_probe_non_media_file_raises(tmp_path):
     fake.write_text("this is not a video")
 
     with pytest.raises(RuntimeError, match="ffprobe"):
-        probe(fake)
+        probe(fake, DECODING.probe_timeout)
 
 
 @pytest.mark.integration
 def test_probe_accepts_str_path(make_media):
     path = make_media("clip.mp4", video=True, audio=True)
 
-    info = probe(str(path))
+    info = probe(str(path), DECODING.probe_timeout)
 
     assert isinstance(info, MediaInfo)
     assert info.path == path
@@ -49,7 +51,7 @@ def test_probe_accepts_str_path(make_media):
 
 @pytest.mark.integration
 def test_probe_audio_only_file(make_media):
-    info = probe(make_media("song.mp3", video=False, audio=True))
+    info = probe(make_media("song.mp3", video=False, audio=True), DECODING.probe_timeout)
 
     assert info.video is None
     assert info.audio is not None
@@ -59,7 +61,7 @@ def test_probe_audio_only_file(make_media):
 
 @pytest.mark.integration
 def test_probe_video_only_mkv(make_media):
-    info = probe(make_media("episode.mkv", video=True, audio=False))
+    info = probe(make_media("episode.mkv", video=True, audio=False), DECODING.probe_timeout)
 
     assert info.audio is None
     assert info.video is not None
@@ -71,7 +73,7 @@ def test_probe_video_only_mkv(make_media):
 @pytest.mark.integration
 def test_probe_mkv_with_audio(make_media):
     # Typical anime episode container: MKV with video + audio, no per-stream durations.
-    info = probe(make_media("episode_av.mkv", video=True, audio=True))
+    info = probe(make_media("episode_av.mkv", video=True, audio=True), DECODING.probe_timeout)
 
     assert info.video is not None
     assert info.audio is not None
@@ -83,7 +85,7 @@ def test_probe_writes_no_files(make_media, tmp_path):
     path = make_media("clip.mp4", video=True, audio=True)
     before = set(tmp_path.iterdir())
 
-    probe(path)
+    probe(path, DECODING.probe_timeout)
 
     assert set(tmp_path.iterdir()) == before
 
@@ -97,7 +99,7 @@ NON_ASCII = "Синтэл 進撃 Pokémon"
 def test_probe_non_ascii_file_name(make_media):
     path = make_media(f"{NON_ASCII}.mp4", video=True, audio=True, duration=1.0)
 
-    info = probe(path)
+    info = probe(path, DECODING.probe_timeout)
 
     assert info.video is not None and info.audio is not None
 
@@ -114,14 +116,14 @@ def test_probe_non_ascii_metadata(make_media, tmp_path):
         check=True,
     )  # fmt: skip
 
-    info = probe(tagged)
+    info = probe(tagged, DECODING.probe_timeout)
 
     assert info.video is not None and info.audio is not None
 
 
 @pytest.mark.integration
 def test_probe_bluelock_amv(bluelock_amv):
-    info = probe(bluelock_amv)
+    info = probe(bluelock_amv, DECODING.probe_timeout)
 
     assert info.video is not None
     assert info.video.width == 1920
@@ -135,4 +137,4 @@ def test_probe_bluelock_amv(bluelock_amv):
 
 @pytest.mark.integration
 def test_probe_is_repeatable(bluelock_amv):
-    assert probe(bluelock_amv) == probe(bluelock_amv)
+    assert probe(bluelock_amv, DECODING.probe_timeout) == probe(bluelock_amv, DECODING.probe_timeout)

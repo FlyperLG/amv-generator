@@ -49,21 +49,22 @@ def drum_loop():
 @pytest.fixture(scope="session")
 def beat_model():
     """The beat_this model, loaded once per test session (downloads ~77 MB the first time)."""
-    from amv.config import BEAT_THIS_CHECKPOINT
+    from amv.config import MUSIC
     from amv.music.beats import load_beat_model
 
-    return load_beat_model(BEAT_THIS_CHECKPOINT)
+    return load_beat_model(MUSIC.beat_checkpoint)
 
 
 @pytest.fixture(scope="session")
 def bluelock_wav(tmp_path_factory):
-    """The Blue Lock AMV's audio as a 22050 Hz mono wav (made once per session); skips if absent."""
+    """The Blue Lock AMV's audio as a DECODING.audio_proxy wav (made once per session); skips if absent."""
     matches = sorted((DATA_DIR / "amvs").glob("*Blue Lock*.mp4"))
     if not matches:
         pytest.skip("Blue Lock AMV not found in data/amvs/")
     if shutil.which("ffmpeg") is None:
         pytest.skip("ffmpeg not on PATH")
 
+    from amv.config import DECODING
     from amv.io.ffmpeg import make_audio_proxy
 
-    return make_audio_proxy(matches[0], tmp_path_factory.mktemp("proxies"))
+    return make_audio_proxy(matches[0], tmp_path_factory.mktemp("proxies"), DECODING.audio_proxy)

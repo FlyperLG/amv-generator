@@ -8,7 +8,7 @@ import pandas as pd
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from amv.config import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
+from amv.config import DecodingSettings
 from amv.io.ffmpeg import generate_file_id, make_audio_proxy, probe
 from amv.io.media import AudioInfo
 
@@ -41,18 +41,24 @@ class AudioFile:
 def _discover_valid_files(
     amv_dir: Path,
     song_dir: Path,
+    video_extensions: frozenset[str],
+    audio_extensions: frozenset[str],
+    probe_timeout: float | None,
 ) -> list[AudioFile]:
     """Find, check and probe every AMV below amv_dir and every song below song_dir.
 
     Runs before any ffmpeg work, so that a bad file stops the run before any audio is
     extracted instead of halfway through. Each folder has its own suffixes, matched
-    case-insensitively at any depth: VIDEO_EXTENSIONS in amv_dir, AUDIO_EXTENSIONS in
+    case-insensitively at any depth: video_extensions in amv_dir, audio_extensions in
     song_dir. Everything else is ignored (an .mp3 lying in amv_dir is not an AMV, an
     .mp4 lying in song_dir is not a song).
 
     Args:
         amv_dir (Path): The folder with the reference AMVs.
         song_dir (Path): The folder with the input songs.
+        video_extensions (frozenset[str]): The lowercase AMV suffixes, with the dot.
+        audio_extensions (frozenset[str]): The lowercase song suffixes, with the dot.
+        probe_timeout (float | None): Seconds per ffprobe call, or None to wait forever.
 
     Returns:
         list[AudioFile]: All AMVs, then all songs, each sorted by path.
@@ -62,8 +68,8 @@ def _discover_valid_files(
         RuntimeError: If ffprobe fails on a file, e.g. one that isn't media at all."""
     valid_files: list[AudioFile] = []
     targets: list[tuple[Path, SongKind, frozenset[str]]] = [
-        (amv_dir, "amv", VIDEO_EXTENSIONS),
-        (song_dir, "song", AUDIO_EXTENSIONS),
+        (amv_dir, "amv", video_extensions),
+        (song_dir, "song", audio_extensions),
     ]
     for path, kind, extensions in targets:
         for file in tqdm(
@@ -73,7 +79,7 @@ def _discover_valid_files(
             dynamic_ncols=True,
             disable=None,
         ):
-            media = probe(file)
+            media = probe(file, probe_timeout)
             if media.audio is None:
                 raise ValueError(f"Got file with no audio stream: {file}")
             song_id = generate_file_id(file)
@@ -86,10 +92,11 @@ def build_song_table(
     song_dir: str | os.PathLike,
     proxy_dir: str | os.PathLike,
     out_path: str | os.PathLike,
+    settings: DecodingSettings,
 ) -> pd.DataFrame:
     """Make the audio proxy of every AMV and song and write the song table (step 01, task 3.7).
 
-    Every input gets a 22050 Hz mono wav, the only audio format step 02 reads. Work
+    Every input gets a wav as set in settings.audio_proxy, the only audio format step 02 reads. Work
     already done is skipped, so a re-run only extracts new or changed files. Files are
     processed one at a time with a progress bar. Step 02 iterates over this table and
     never lists proxy_dir itself. It does not read videos.parquet: an AMV's song_id
@@ -100,7 +107,7 @@ def build_song_table(
             kind is "amv" or "song", from the folder the file was found in
         audio_proxy_path: the cached wav
         duration, sample_rate, channels, codec: of the original's audio stream, not
-            of the wav (which is always 22050 Hz mono pcm)
+            of the wav (which is pcm as set in settings.audio_proxy)
 
     Args:
         amv_dir (str | os.PathLike): The folder with the reference AMVs.
@@ -108,6 +115,8 @@ def build_song_table(
         proxy_dir (str | os.PathLike): The proxy cache; created if missing.
         out_path (str | os.PathLike): The parquet file to write; its folder is created if
             missing. It is written to a temp name first, so it is never left half-written.
+        settings (DecodingSettings): Step 01's settings: both extension sets, probe_timeout
+            and audio_proxy are used.
 
     Returns:
         pd.DataFrame: The table, exactly as written to out_path.
@@ -126,7 +135,9 @@ def build_song_table(
     if not song_dir.exists():
         raise FileNotFoundError(f"Input song directory does not exist: {song_dir}")
 
-    valid_files = _discover_valid_files(amv_dir, song_dir)
+    valid_files = _discover_valid_files(
+        amv_dir, song_dir, settings.video_extensions, settings.audio_extensions, settings.probe_timeout
+    )
     data: list[dict[str, Any]] = []
     with logging_redirect_tqdm():
         bar = tqdm(
@@ -139,7 +150,7 @@ def build_song_table(
         )
         for i, file in bar:
             bar.set_postfix_str(file.song_id[:8])
-            audio_proxy_path = make_audio_proxy(file.path, proxy_dir)
+            audio_proxy_path = make_audio_proxy(file.path, proxy_dir, settings.audio_proxy)
 
             row = {
                 "song_id": file.song_id,

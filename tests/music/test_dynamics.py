@@ -8,7 +8,7 @@ or private. One integration test runs the whole chain on the Blue Lock song.
 SPECIFICATION
   Settings are required arguments (Decision: dynamics.py does not read amv.config; the entry
   point reads the values from config and passes them in).
-  (config: SG_POLYORDER = 2, DENSE_SG_WINDOW_BEATS = 1.0, BEAT_SG_WINDOW = 5)
+  (config: MUSIC.sg_polyorder = 2, MUSIC.dense_sg_window_beats = 1.0, MUSIC.beat_sg_window = 5)
 
   The order of operations (Decision: pool the RAW dense curves, not the smoothed ones.
   Averaging over a beat is already a 1-beat smoothing, so pooling the dense _s curves would
@@ -448,9 +448,9 @@ def test_the_chain_is_fast_on_a_song_sized_input():
 def test_config_has_the_planned_settings():
     import amv.config as config
 
-    assert config.SG_POLYORDER == 2
-    assert config.DENSE_SG_WINDOW_BEATS == 1.0
-    assert config.BEAT_SG_WINDOW == 5
+    assert config.MUSIC.sg_polyorder == 2
+    assert config.MUSIC.dense_sg_window_beats == 1.0
+    assert config.MUSIC.beat_sg_window == 5
 
 
 # =================================================================================
@@ -465,17 +465,25 @@ def test_bluelock_chain_gives_one_finite_row_per_beat(beat_model, bluelock_wav):
     from amv.music.beats import clean_beats, detect_beats
     from amv.music.dense import compute_dense_features
 
-    y, sr = load_audio(bluelock_wav, config.AUDIO_SAMPLE_RATE)
+    y, sr = load_audio(bluelock_wav, config.MUSIC.sample_rate)
     beats, _ = detect_beats(y, sr, beat_model)
-    beats = clean_beats(beats, config.MIN_IBI)
+    beats = clean_beats(beats, config.MUSIC.min_ibi)
     dense = compute_dense_features(
-        y, sr, config.HOP_LENGTH, config.N_FFT, config.N_MELS, config.LOW_BAND_HZ, config.HIGH_BAND_HZ
+        y,
+        sr,
+        config.MUSIC.hop_length,
+        config.MUSIC.n_fft,
+        config.MUSIC.n_mels,
+        config.MUSIC.low_band_hz,
+        config.MUSIC.high_band_hz,
     )
 
     smoothed = smooth_dense(
-        dense, float(np.median(np.diff(beats))), config.DENSE_SG_WINDOW_BEATS, config.SG_POLYORDER
+        dense, float(np.median(np.diff(beats))), config.MUSIC.dense_sg_window_beats, config.MUSIC.sg_polyorder
     )
-    out = beat_dynamics(pool_to_beats(dense, beats), dense.names, config.BEAT_SG_WINDOW, config.SG_POLYORDER)
+    out = beat_dynamics(
+        pool_to_beats(dense, beats), dense.names, config.MUSIC.beat_sg_window, config.MUSIC.sg_polyorder
+    )
 
     assert smoothed.values.shape == dense.values.shape
     assert np.isfinite(smoothed.values).all()

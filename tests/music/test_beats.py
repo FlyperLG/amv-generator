@@ -21,7 +21,7 @@ SPECIFICATION
   - Calls model(y, sr) exactly once and returns (beats, downbeats) in seconds, both
     1-D float64 arrays. No cleaning here; that is clean_beats' job.
 
-  clean_beats(beats, min_ibi) -> np.ndarray          (config: MIN_IBI = 0.25 s)
+  clean_beats(beats, min_ibi) -> np.ndarray          (config: MUSIC.min_ibi = 0.25 s)
   - beats: sorted times in seconds, any array-like. Returns a new float64 array,
     strictly increasing; the input is not modified.
   - Step 1, drop: walk through the beats in order and keep a beat only if it is at
@@ -48,7 +48,7 @@ SPECIFICATION
                           every downbeat and never decreases.
 
   build_beat_grid(beats, downbeats, beats_per_bar, tol, window_bars) -> BeatGrid
-    (config: 4 beats per bar, DOWNBEAT_TOL = 0.07 s, DOWNBEAT_WINDOW_BARS = 8)
+    (config: 4 beats per bar, MUSIC.downbeat_tol = 0.07 s, MUSIC.downbeat_window_bars = 8)
   - The tracker's downbeats are VOTES, not the answer (Decision: they are too noisy
     to count "beats since the last downbeat", see above):
       1. Each downbeat is matched to its nearest beat, if within tol seconds;
@@ -74,7 +74,7 @@ import time
 import numpy as np
 import pytest
 
-from amv.config import AUDIO_SAMPLE_RATE, BEAT_THIS_CHECKPOINT
+from amv.config import MUSIC
 from amv.music.beats import BeatGrid, build_beat_grid, clean_beats, detect_beats, load_beat_model
 
 IBI = 0.5  # 120 BPM, used for hand-made beat grids
@@ -507,7 +507,7 @@ def test_grid_does_not_modify_inputs():
 @pytest.mark.integration
 def test_load_beat_model_is_cached(beat_model):
     assert callable(beat_model)
-    assert load_beat_model(BEAT_THIS_CHECKPOINT) is beat_model
+    assert load_beat_model(MUSIC.beat_checkpoint) is beat_model
 
 
 @pytest.mark.integration
@@ -528,7 +528,7 @@ def bluelock_beats(beat_model, bluelock_wav):
     """(raw beats, raw downbeats, seconds detect_beats took) for the Blue Lock song."""
     from amv.music.audio import load_audio
 
-    y, sr = load_audio(bluelock_wav, AUDIO_SAMPLE_RATE)
+    y, sr = load_audio(bluelock_wav, MUSIC.sample_rate)
     start = time.perf_counter()
     beats, downbeats = detect_beats(y, sr, beat_model)
     return beats, downbeats, time.perf_counter() - start

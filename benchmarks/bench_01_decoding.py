@@ -28,6 +28,7 @@ import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.ticker import MaxNLocator
 
+from amv.config import DECODING, PATHS
 from amv.io.ffmpeg import iter_frames, make_video_proxy, probe
 from benchmarks.plots import plot_repeats, plot_throughput
 from benchmarks.results import BenchResult, load_run, print_table, save_run
@@ -56,6 +57,7 @@ def _measure_proxy_transcode(in_path: Path, n_frames: int) -> int:
         make_video_proxy(
             in_path,
             out_dir,
+            DECODING.video_proxy,
         )
     return n_frames
 
@@ -151,9 +153,9 @@ def parse_args(argv: list[str] | None = None) -> Args:
     parser.add_argument("--width", type=int, default=320, help="frame width of the frame reads, in px")
     parser.add_argument("--height", type=int, default=180, help="frame height of the frame reads, in px")
     parser.add_argument(
-        "--proxy-dir", type=Path, default=Path("data/proxies/"), help="proxy cache used for the proxy read"
+        "--proxy-dir", type=Path, default=PATHS.proxy_dir, help="proxy cache used for the proxy read"
     )
-    parser.add_argument("--out", type=Path, default=Path("data/out/bench/"), help="folder for the run JSON")
+    parser.add_argument("--out", type=Path, default=PATHS.bench_dir, help="folder for the run JSON")
     parser.add_argument("--plot", action="store_true", help="also save a .png next to the JSON")
     parser.add_argument(
         "--from-json",
@@ -188,7 +190,7 @@ def main(argv: list[str] | None = None) -> None:
         _plot(results, summary["break_even_reads"], args.from_json.with_suffix(".png"))
         return
 
-    media_info = probe(args.video)
+    media_info = probe(args.video, DECODING.probe_timeout)
     if media_info.video is None:
         raise ValueError("The given file is not of type video.")
 
@@ -200,8 +202,9 @@ def main(argv: list[str] | None = None) -> None:
     proxy_file_path = make_video_proxy(
         args.video,
         args.proxy_dir,
+        DECODING.video_proxy,
     )
-    proxy_media_info = probe(proxy_file_path)
+    proxy_media_info = probe(proxy_file_path, DECODING.probe_timeout)
 
     transcode_result = benchmark(
         fn=functools.partial(_measure_proxy_transcode, args.video, n_frames),

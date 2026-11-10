@@ -7,7 +7,7 @@ SPECIFICATION
   load_audio(path, sample_rate) -> tuple[np.ndarray, int]
   - path accepts str or PathLike. Reads the file with soundfile.
   - sample_rate is the rate the file must have, a required argument (Decision: audio.py
-    does not read amv.config; the entry point passes AUDIO_SAMPLE_RATE in).
+    does not read amv.config; the entry point passes MUSIC.sample_rate in).
   - Returns (y, sr): y is a 1-D float32 array with one value per sample in the file,
     sr is sample_rate.
   - Peak-normalised: y = x / max|x|, so max|y| == 1.0 and the waveform's shape is
@@ -29,10 +29,10 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from amv.config import AUDIO_SAMPLE_RATE
+from amv.config import DECODING, MUSIC
 from amv.music.audio import load_audio
 
-SR = AUDIO_SAMPLE_RATE
+SR = MUSIC.sample_rate
 
 
 def write_wav(path, samples, sr=SR, subtype="PCM_16"):
@@ -180,7 +180,7 @@ def test_loads_an_audio_proxy(make_media, tmp_path):
 
     src = make_media("song.mp3", video=False, audio=True, channels=2)  # 44.1 kHz stereo, 440 Hz
 
-    y, sr = load_audio(make_audio_proxy(src, tmp_path / "proxies"), SR)
+    y, sr = load_audio(make_audio_proxy(src, tmp_path / "proxies", DECODING.audio_proxy), SR)
 
     assert sr == SR
     assert np.abs(y).max() == pytest.approx(1.0, abs=1e-6)

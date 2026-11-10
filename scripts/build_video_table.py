@@ -18,7 +18,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from amv.config import AMV_DIR, LIBRARY_DIR, PROXY_DIR, VIDEO_TABLE_PATH
+from amv.config import DECODING, PATHS
 from amv.io.videos import build_video_table
 
 
@@ -50,15 +50,17 @@ def parse_args(argv: list[str] | None = None) -> Args:
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--amv-dir", type=Path, default=AMV_DIR, help="folder with the reference AMVs")
+    parser.add_argument("--amv-dir", type=Path, default=PATHS.amv_dir, help="folder with the reference AMVs")
     parser.add_argument(
         "--library-dir",
         type=Path,
-        default=LIBRARY_DIR,
+        default=PATHS.library_dir,
         help="folder with the source footage, one sub-folder per series",
     )
-    parser.add_argument("--proxy-dir", type=Path, default=PROXY_DIR, help="proxy cache, created if missing")
-    parser.add_argument("--out-path", type=Path, default=VIDEO_TABLE_PATH, help="parquet file to write")
+    parser.add_argument(
+        "--proxy-dir", type=Path, default=PATHS.proxy_dir, help="proxy cache, created if missing"
+    )
+    parser.add_argument("--out-path", type=Path, default=PATHS.video_table_path, help="parquet file to write")
     parser.add_argument(
         "-v",
         "--verbose",
@@ -104,6 +106,7 @@ def main(argv: list[str] | None = None) -> None:
         library_dir=args.library_dir,
         proxy_dir=args.proxy_dir,
         out_path=args.out_path,
+        settings=DECODING,
     )
 
 

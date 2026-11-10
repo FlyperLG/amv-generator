@@ -9,8 +9,8 @@ integration test runs the whole chain on the Blue Lock song.
 SPECIFICATION
   Settings are required arguments (Decision: sections.py does not read amv.config; the entry
   point reads the values from config and passes them in).
-  (config: SECTION_KERNEL_BARS = 8, MIN_SECTION_BARS = 4, NOVELTY_PROMINENCE = 0.1,
-           DROP_LEVEL = 0.75, BUILD_RISE = 0.5)
+  (config: MUSIC.section_kernel_bars = 8, MUSIC.min_section_bars = 4, MUSIC.novelty_prominence = 0.1,
+           MUSIC.drop_level = 0.75, MUSIC.build_rise = 0.5)
   SECTION_LABELS = ("intro", "build", "drop", "break", "outro") is a fixed vocabulary, not config.
 
   The chain (the caller does the pooling, with functions that already exist):
@@ -647,11 +647,11 @@ def test_sections_are_fast_on_a_song_sized_input():
 def test_config_has_the_planned_settings():
     import amv.config as config
 
-    assert config.SECTION_KERNEL_BARS == K
-    assert config.MIN_SECTION_BARS == MIN_BARS
-    assert config.NOVELTY_PROMINENCE == PROMINENCE
-    assert config.DROP_LEVEL == DROP_LEVEL
-    assert config.BUILD_RISE == BUILD_RISE
+    assert config.MUSIC.section_kernel_bars == K
+    assert config.MUSIC.min_section_bars == MIN_BARS
+    assert config.MUSIC.novelty_prominence == PROMINENCE
+    assert config.MUSIC.drop_level == DROP_LEVEL
+    assert config.MUSIC.build_rise == BUILD_RISE
 
 
 # =================================================================================
@@ -669,22 +669,30 @@ def test_bluelock_sections_are_plausible(beat_model, bluelock_wav):
     from amv.music.dense import compute_dense_features, compute_timbre_features
     from amv.music.dynamics import beat_dynamics, pool_to_beats
 
-    y, sr = load_audio(bluelock_wav, c.AUDIO_SAMPLE_RATE)
+    y, sr = load_audio(bluelock_wav, c.MUSIC.sample_rate)
     beats, downbeats = detect_beats(y, sr, beat_model)
     grid = build_beat_grid(
-        clean_beats(beats, c.MIN_IBI), downbeats, c.BEATS_PER_BAR, c.DOWNBEAT_TOL, c.DOWNBEAT_WINDOW_BARS
+        clean_beats(beats, c.MUSIC.min_ibi),
+        downbeats,
+        c.MUSIC.beats_per_bar,
+        c.MUSIC.downbeat_tol,
+        c.MUSIC.downbeat_window_bars,
     )
-    timbre = compute_timbre_features(y, sr, c.HOP_LENGTH, c.N_FFT, c.N_MELS, c.N_MFCC)
-    dense = compute_dense_features(y, sr, c.HOP_LENGTH, c.N_FFT, c.N_MELS, c.LOW_BAND_HZ, c.HIGH_BAND_HZ)
-    dyn = beat_dynamics(pool_to_beats(dense, grid.times), dense.names, c.BEAT_SG_WINDOW, c.SG_POLYORDER)
+    timbre = compute_timbre_features(y, sr, c.MUSIC.hop_length, c.MUSIC.n_fft, c.MUSIC.n_mels, c.MUSIC.n_mfcc)
+    dense = compute_dense_features(
+        y, sr, c.MUSIC.hop_length, c.MUSIC.n_fft, c.MUSIC.n_mels, c.MUSIC.low_band_hz, c.MUSIC.high_band_hz
+    )
+    dyn = beat_dynamics(
+        pool_to_beats(dense, grid.times), dense.names, c.MUSIC.beat_sg_window, c.MUSIC.sg_polyorder
+    )
 
     bars = pool_to_beats(timbre, grid.times[grid.is_downbeat])
-    novelty = section_novelty(bars, c.SECTION_KERNEL_BARS)
-    found = find_section_boundaries(novelty, c.MIN_SECTION_BARS, c.NOVELTY_PROMINENCE)
-    labels = label_sections(grid, dyn["rms_s"], dyn["rms_d1"], found, c.DROP_LEVEL, c.BUILD_RISE)
+    novelty = section_novelty(bars, c.MUSIC.section_kernel_bars)
+    found = find_section_boundaries(novelty, c.MUSIC.min_section_bars, c.MUSIC.novelty_prominence)
+    labels = label_sections(grid, dyn["rms_s"], dyn["rms_d1"], found, c.MUSIC.drop_level, c.MUSIC.build_rise)
 
     assert 4 <= len(found) <= 12
-    assert (np.diff(found) >= c.MIN_SECTION_BARS).all()
+    assert (np.diff(found) >= c.MUSIC.min_section_bars).all()
     assert labels.shape == grid.times.shape
     breakdown = (grid.times > 58) & (grid.times < 74)
     assert np.mean(labels[breakdown] == "drop") < 0.2

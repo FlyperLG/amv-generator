@@ -7,44 +7,29 @@ SECTION_LABELS = ("intro", "build", "drop", "break", "outro")  # fixed vocabular
 
 
 def find_section_boundaries(
-    bar_features: np.ndarray,
-    kernel_bars: int,
+    novelty: np.ndarray,
     min_section_bars: int,
     prominence: float,
 ) -> np.ndarray:
-    """Find the bars where the song's timbre and harmony change, as section starts.
+    """Pick the section starts: the novelty peaks that stand out by at least prominence.
 
-    Compares every bar with every other (_self_similarity), slides a checkerboard kernel
-    along the diagonal (_novelty), and keeps the novelty peaks that stand out by at least
-    prominence. No section is shorter than min_section_bars, the first and last included.
-    The features are z-scored per column, so a song without real sections still gets
-    boundaries at its largest changes.
+    Peaks are at least min_section_bars apart (the higher one wins), and peaks closer than
+    min_section_bars to either end are dropped, so no section is shorter than
+    min_section_bars, the first and last included.
 
     Args:
-        bar_features (np.ndarray): The timbre features pooled per bar, shape [n_bars, D],
-            row k = bar_idx k. Not modified.
-        kernel_bars (int): The kernel width in bars: kernel_bars / 2 before vs after. Even.
+        novelty (np.ndarray): The novelty per bar from section_novelty, shape [n_bars].
+            Not modified.
         min_section_bars (int): The shortest section allowed, in bars.
         prominence (float): How far a novelty peak must stand out, in similarity units
             (a perfect change scores 1).
 
     Returns:
         np.ndarray: The sorted int bar indices where a section starts, 1-D, always
-            starting with 0. Just [0] for fewer than 2 bars.
-
-    Raises:
-        ValueError: If kernel_bars is odd."""
-    if kernel_bars % 2 != 0:
-        raise ValueError(
-            f"Received uneven number of kernel_bars {kernel_bars}, number of bars needs to be even."
-        )
-
-    n_bars = bar_features.shape[0]
+            starting with 0. Just [0] for fewer than 2 bars."""
+    n_bars = len(novelty)
     if n_bars < 2:
         return np.array([0])
-
-    similarity = _self_similarity(bar_features)
-    novelty = _novelty(similarity, kernel_bars)
     peaks, _ = scipy.signal.find_peaks(novelty, prominence=prominence, distance=min_section_bars)
     peaks = peaks[(min_section_bars <= peaks) & (peaks <= (n_bars - min_section_bars))]
     peaks = np.concatenate([[0], peaks])
@@ -100,6 +85,38 @@ def _checkerboard_kernel(kernel_bars: int) -> np.ndarray:
     kernel = sign * taper
     kernel = kernel / taper.sum()
     return kernel
+
+
+def section_novelty(bar_features: np.ndarray, kernel_bars: int) -> np.ndarray:
+    """Score every bar for how much the song's timbre and harmony change there.
+
+    Compares every bar with every other (_self_similarity), then slides a checkerboard
+    kernel along the diagonal (_novelty). A peak at bar b means a section starts at b. The
+    features are z-scored per column, so a song without real sections still gets peaks at
+    its largest changes.
+
+    Args:
+        bar_features (np.ndarray): The timbre features pooled per bar, shape [n_bars, D],
+            row k = bar_idx k. Not modified.
+        kernel_bars (int): The kernel width in bars: kernel_bars / 2 before vs after. Even.
+
+    Returns:
+        np.ndarray: The novelty per bar, shape [n_bars], in similarity units (a perfect
+            change scores 1). All zeros for fewer than 2 bars.
+
+    Raises:
+        ValueError: If kernel_bars is odd."""
+    if kernel_bars % 2 != 0:
+        raise ValueError(
+            f"Received uneven number of kernel_bars {kernel_bars}, number of bars needs to be even."
+        )
+
+    n_bars = bar_features.shape[0]
+    if n_bars < 2:
+        return np.zeros(n_bars)
+
+    similarity = _self_similarity(bar_features)
+    return _novelty(similarity, kernel_bars)
 
 
 def _novelty(ssm: np.ndarray, kernel_bars: int) -> np.ndarray:

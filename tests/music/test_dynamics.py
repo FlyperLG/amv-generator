@@ -13,7 +13,7 @@ SPECIFICATION
   The order of operations (Decision: pool the RAW dense curves, not the smoothed ones.
   Averaging over a beat is already a 1-beat smoothing, so pooling the dense _s curves would
   smooth twice; and the schema's rms column is "pooled", rms_s "smoothed"):
-      dense ──smooth_dense──> dense _s curves         (for the npz, the 3.6 plot, step 07)
+      dense ──smooth_dense──> dense _s curves         (for the npz, the 3.7 plot, step 07)
       dense ──pool_to_beats──> [B, F] ──beat_dynamics──> raw, _s, _d1, _d2 per beat
 
   smooth_dense(dense, beat_period, window_beats, polyorder) -> DenseFeatures

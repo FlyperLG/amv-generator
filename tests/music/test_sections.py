@@ -16,9 +16,12 @@ SPECIFICATION
   The chain (the caller does the pooling, with functions that already exist):
       timbre  = compute_timbre_features(y, ...)                       [T, D] raw
       bars    = pool_to_beats(timbre, grid.times[grid.is_downbeat])   [n_bars, D]  bar k = bar_idx k
-      bounds  = find_section_boundaries(bars, kernel_bars, min_section_bars, prominence)
+      novelty = section_novelty(bars, kernel_bars)                    [n_bars]
+      bounds  = find_section_boundaries(novelty, min_section_bars, prominence)
       labels  = label_sections(grid, dyn["rms_s"], dyn["rms_d1"], bounds, drop_level, build_rise)
   Boundaries are bar indices, so they are snapped to downbeats by construction.
+  (Decision, task 3.7: the novelty is public and computed once, so the diagnostic plot can draw
+  the same curve the boundaries were picked from. It is not cached; the plot recomputes it.)
 
   _self_similarity(bar_features) -> [n_bars, n_bars]
   - z-score each column over the bars: (x - mean) / std. A column with std 0 becomes all
@@ -47,17 +50,22 @@ SPECIFICATION
     peak at bar b means "the section changes between bar b - 1 and bar b".
   - Not rescaled. A perfect change (+1 within each side, -1 across) gives exactly 1.
 
-  find_section_boundaries(bar_features, kernel_bars, min_section_bars, prominence) -> np.ndarray
-  - Sorted int bar indices where a section starts. Always starts with 0.
-  - The other boundaries are the peaks of the novelty found by
+  section_novelty(bar_features, kernel_bars) -> np.ndarray [n_bars], float
+  - _novelty(_self_similarity(bar_features), kernel_bars).
+  - Odd kernel_bars: ValueError. Fewer than 2 bars: all zeros, shape [n_bars], no numpy
+    warning (Decision: a 0- or 1-bar song has no change anywhere). Input not modified.
+  - Known limitation: the z-scoring stretches a song's variation to unit size, so a song
+    with no real sections still gets novelty peaks at its biggest wobbles. Real songs have
+    sections, and imperfect labels are acceptable here (step 13 lets the user fix them).
+
+  find_section_boundaries(novelty, min_section_bars, prominence) -> np.ndarray
+  - Sorted int bar indices where a section starts. Always starts with 0. n_bars = len(novelty).
+  - The other boundaries are the peaks found by
     scipy.signal.find_peaks(novelty, prominence=prominence, distance=min_section_bars),
     minus any peak closer than min_section_bars to the start or the end
     (min_section_bars <= peak <= n_bars - min_section_bars). So no section is shorter than
     min_section_bars bars.
-  - Fewer than 2 bars: [0]. Odd kernel_bars: ValueError. Input not modified.
-  - Known limitation: the z-scoring stretches a song's variation to unit size, so a song
-    with no real sections still gets boundaries at its biggest wobbles. Real songs have
-    sections, and imperfect labels are acceptable here (step 13 lets the user fix them).
+  - Fewer than 2 bars: [0]. Input not modified.
 
   label_sections(grid, rms_s, rms_d1, boundaries, drop_level, build_rise) -> np.ndarray [B]
   - One label per beat, every one in SECTION_LABELS.
@@ -96,6 +104,7 @@ from amv.music.sections import (
     _self_similarity,
     find_section_boundaries,
     label_sections,
+    section_novelty,
 )
 
 K = 8
@@ -107,7 +116,17 @@ BEATS_PER_BAR = 4
 
 
 def boundaries(bar_features, kernel_bars=K, min_section_bars=MIN_BARS, prominence=PROMINENCE):
-    return find_section_boundaries(bar_features, kernel_bars, min_section_bars, prominence)
+    """The whole chain from bar features to boundaries."""
+    return find_section_boundaries(section_novelty(bar_features, kernel_bars), min_section_bars, prominence)
+
+
+def spikes(n_bars, **peaks):
+    """A flat zero novelty curve of n_bars values with a spike of the given height at each bar
+    (keys are "b<bar>", e.g. spikes(20, b8=0.5))."""
+    novelty = np.zeros(n_bars)
+    for key, height in peaks.items():
+        novelty[int(key[1:])] = height
+    return novelty
 
 
 def blocks(*lengths, dim=24, noise=0.1, seed=0):
@@ -293,7 +312,117 @@ def test_novelty_matches_the_reference_on_random_input():
 
 
 # =================================================================================
-# find_section_boundaries
+# section_novelty
+# =================================================================================
+
+
+def test_section_novelty_is_the_novelty_of_the_self_similarity():
+    bars = blocks(10, 14, 9)
+
+    np.testing.assert_allclose(section_novelty(bars, K), _novelty(_self_similarity(bars), K), atol=1e-12)
+
+
+def test_section_novelty_has_one_float_per_bar():
+    novelty = section_novelty(blocks(12, 12), K)
+
+    assert novelty.shape == (24,)
+    assert np.issubdtype(novelty.dtype, np.floating)
+
+
+def test_section_novelty_peaks_where_the_blocks_change():
+    assert np.argmax(section_novelty(blocks(12, 12), K)) == 12
+
+
+def test_section_novelty_does_not_depend_on_the_scale_of_the_features():
+    bars = blocks(12, 12, 12)
+
+    np.testing.assert_allclose(section_novelty(bars * 50, K), section_novelty(bars, K), atol=1e-9)
+
+
+@pytest.mark.parametrize("n_bars", [0, 1])
+def test_section_novelty_of_fewer_than_two_bars_is_zeros_without_warnings(n_bars):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        novelty = section_novelty(np.ones((n_bars, 24)), K)
+
+    np.testing.assert_array_equal(novelty, np.zeros(n_bars))
+
+
+def test_odd_kernel_is_rejected():
+    with pytest.raises(ValueError):
+        section_novelty(blocks(12, 12), 7)
+
+
+def test_section_novelty_does_not_modify_the_input():
+    bars = blocks(12, 12)
+    original = bars.copy()
+
+    section_novelty(bars, K)
+
+    np.testing.assert_array_equal(bars, original)
+
+
+# =================================================================================
+# find_section_boundaries: on hand-made novelty curves
+# =================================================================================
+
+
+def test_boundaries_are_the_prominent_peaks():
+    novelty = spikes(24, b8=0.5, b14=0.05, b18=0.3)
+
+    np.testing.assert_array_equal(find_section_boundaries(novelty, MIN_BARS, 0.1), [0, 8, 18])
+
+
+def test_boundaries_use_prominence_as_given():
+    novelty = spikes(24, b8=0.5, b18=0.3)
+
+    np.testing.assert_array_equal(find_section_boundaries(novelty, MIN_BARS, 0.4), [0, 8])
+
+
+def test_peaks_closer_than_min_section_bars_to_either_end_are_dropped():
+    """Bar 3 is too close to the start, bar 21 to the end (24 - 4 = 20 is the last allowed)."""
+    novelty = spikes(24, b3=1.0, b10=0.5, b21=1.0)
+
+    found = find_section_boundaries(novelty, MIN_BARS, PROMINENCE)
+
+    assert 3 not in found and 21 not in found
+    assert found[0] == 0 and 10 in found
+
+
+def test_a_peak_exactly_min_section_bars_from_the_end_is_kept():
+    np.testing.assert_array_equal(find_section_boundaries(spikes(24, b20=0.5), MIN_BARS, PROMINENCE), [0, 20])
+
+
+def test_close_peaks_keep_only_the_higher_one():
+    np.testing.assert_array_equal(
+        find_section_boundaries(spikes(24, b10=0.5, b12=0.9), MIN_BARS, PROMINENCE), [0, 12]
+    )
+
+
+def test_a_flat_novelty_gives_only_boundary_zero():
+    np.testing.assert_array_equal(find_section_boundaries(np.zeros(24), MIN_BARS, PROMINENCE), [0])
+
+
+@pytest.mark.parametrize("n_bars", [0, 1])
+def test_boundaries_of_fewer_than_two_bars_are_only_zero(n_bars):
+    """A 1-D [0], not a 0-d array: assert_array_equal would broadcast 0 against [0]."""
+    found = find_section_boundaries(np.zeros(n_bars), MIN_BARS, PROMINENCE)
+
+    assert found.shape == (1,)
+    assert found[0] == 0
+
+
+def test_boundaries_do_not_modify_the_novelty():
+    novelty = spikes(24, b8=0.5, b18=0.3)
+    original = novelty.copy()
+
+    find_section_boundaries(novelty, MIN_BARS, PROMINENCE)
+
+    np.testing.assert_array_equal(novelty, original)
+
+
+# =================================================================================
+# section_novelty -> find_section_boundaries: the chain on block features
 # =================================================================================
 
 
@@ -340,15 +469,8 @@ def test_prominence_drops_weak_changes():
     np.testing.assert_array_equal(boundaries(bars, prominence=0.4), [0, 24])
 
 
-def test_boundaries_do_not_depend_on_the_scale_of_the_features():
-    bars = blocks(12, 12, 12)
-
-    np.testing.assert_array_equal(boundaries(bars * 50), boundaries(bars))
-
-
 @pytest.mark.parametrize("n_bars", [0, 1])
 def test_fewer_than_two_bars_gives_only_boundary_zero(n_bars):
-    """A 1-D [0], not a 0-d array: assert_array_equal would broadcast 0 against [0]."""
     found = boundaries(np.ones((n_bars, 24)))
 
     assert found.shape == (1,)
@@ -362,20 +484,6 @@ def test_a_one_bar_song_can_be_labelled():
     labels = label_sections(grid, np.zeros(4), np.zeros(4), found, DROP_LEVEL, BUILD_RISE)
 
     assert labels.tolist() == ["intro"] * 4
-
-
-def test_odd_kernel_is_rejected():
-    with pytest.raises(ValueError):
-        boundaries(blocks(12, 12), kernel_bars=7)
-
-
-def test_boundaries_do_not_modify_the_input():
-    bars = blocks(12, 12)
-    original = bars.copy()
-
-    boundaries(bars)
-
-    np.testing.assert_array_equal(bars, original)
 
 
 # =================================================================================
@@ -571,7 +679,8 @@ def test_bluelock_sections_are_plausible(beat_model, bluelock_wav):
     dyn = beat_dynamics(pool_to_beats(dense, grid.times), dense.names, c.BEAT_SG_WINDOW, c.SG_POLYORDER)
 
     bars = pool_to_beats(timbre, grid.times[grid.is_downbeat])
-    found = find_section_boundaries(bars, c.SECTION_KERNEL_BARS, c.MIN_SECTION_BARS, c.NOVELTY_PROMINENCE)
+    novelty = section_novelty(bars, c.SECTION_KERNEL_BARS)
+    found = find_section_boundaries(novelty, c.MIN_SECTION_BARS, c.NOVELTY_PROMINENCE)
     labels = label_sections(grid, dyn["rms_s"], dyn["rms_d1"], found, c.DROP_LEVEL, c.BUILD_RISE)
 
     assert 4 <= len(found) <= 12

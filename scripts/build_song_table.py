@@ -13,13 +13,12 @@ Output: data/cache/songs.parquet, wavs in data/proxies/.
 """
 
 import argparse
-import logging
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from amv.config import DECODING, PATHS
 from amv.io.songs import build_song_table
+from scripts.common import configure_stdout, setup_logging
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,22 +75,6 @@ def parse_args(argv: list[str] | None = None) -> Args:
     return args
 
 
-def setup_logging(verbose: bool) -> None:
-    """Log INFO and above to stderr; verbose turns on DEBUG for the amv package only.
-
-    Third-party libraries stay at INFO either way (numba and matplotlib flood DEBUG).
-    Without verbose, amv.io.ffmpeg is limited to warnings, which hides its "skipping"
-    messages.
-
-    Args:
-        verbose (bool): Whether to show the amv package's DEBUG messages."""
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    if verbose:
-        logging.getLogger("amv").setLevel(logging.DEBUG)
-    else:
-        logging.getLogger("amv.io.ffmpeg").setLevel(logging.WARNING)
-
-
 def main(argv: list[str] | None = None) -> None:
     """Parse the arguments, set up logging and build the song table.
 
@@ -99,7 +82,7 @@ def main(argv: list[str] | None = None) -> None:
         argv (list[str] | None): The arguments without the program name, or None to read
             sys.argv."""
     args = parse_args(argv)
-    setup_logging(args.verbose)
+    setup_logging(verbose=args.verbose, quiet=("amv.io.ffmpeg",))
 
     build_song_table(
         amv_dir=args.amv_dir,
@@ -111,5 +94,5 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    configure_stdout()
     main()

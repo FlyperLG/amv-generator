@@ -6,6 +6,10 @@ entry points (scripts, benchmarks) pass a whole section to the functions that ca
 outputs, and single fields (MUSIC.min_ibi) to the others. Variants for tests or
 experiments: dataclasses.replace(MUSIC, drop_level=0.5).
 
+Only the pipeline and the model are configured here. Side tools keep their settings in
+their own folder with the same pattern (benchmarks/settings.py), so nothing in PATHS
+points into data/out/.
+
 Settings that change an output are part of its cache name (the settings_id), so changing
 one rebuilds those files instead of reusing stale ones. Old files stay until deleted by
 hand. Timeouts don't affect any output.
@@ -37,7 +41,6 @@ class PathSettings:
     video_table_path: Path = DATA_DIR / "cache" / "videos.parquet"  # step 01 output, read by every later step
     song_table_path: Path = DATA_DIR / "cache" / "songs.parquet"  # step 01 output, read by every later step
     music_cache_dir: Path = DATA_DIR / "cache" / "music"  # step 02 beat tables and dense curves
-    bench_dir: Path = DATA_DIR / "out" / "bench"  # benchmark runs (json + png)
 
 
 PATHS = PathSettings()

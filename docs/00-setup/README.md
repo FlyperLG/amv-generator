@@ -66,7 +66,7 @@ amv-generator/
     eval/metrics.py        # 11
   scripts/                 # CLI entry points per step (preprocess_library.py, ...)
   benchmarks/              # bench_<step>_<topic>.py entry points (run as `python -m benchmarks.<name>`, output in
-                           # data/out/bench/) + shared timing.py, results.py, plots.py, machine.py
+                           # data/out/bench/) + shared settings.py, timing.py, results.py, plots.py, machine.py
   tests/
   docs/
   data/                    # see project plan §5

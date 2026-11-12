@@ -10,6 +10,9 @@ SPECIFICATION
     UPPER_CASE settings.
   - config.py is a leaf: it imports nothing from amv, so importing it for typing can never
     cause an import cycle. It also doesn't need ffmpeg (amv.io.ffmpeg finds the binaries).
+  - config.py is the config of the pipeline and the model only. Settings of side tools
+    (benchmarks, manual checks) live in their own folder (e.g. benchmarks/settings.py), so
+    no path in PATHS points into data/out/, where those tools write.
   - Values more than one step must agree on have one source: MUSIC.sample_rate defaults to
     DECODING.audio_proxy.sample_rate.
 """
@@ -81,6 +84,11 @@ def test_paths_live_below_the_data_dir():
         path = getattr(PATHS, f.name)
         assert isinstance(path, Path), f.name
         assert path.is_relative_to(config.DATA_DIR), f.name
+
+
+def test_paths_hold_no_side_tool_output():
+    for f in dataclasses.fields(PathSettings):
+        assert not getattr(PATHS, f.name).is_relative_to(config.DATA_DIR / "out"), f.name
 
 
 def test_decoding_has_the_planned_values():

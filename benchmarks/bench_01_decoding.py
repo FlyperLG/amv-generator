@@ -32,6 +32,7 @@ from amv.config import DECODING, PATHS
 from amv.io.ffmpeg import iter_frames, make_video_proxy, probe
 from benchmarks.plots import plot_repeats, plot_throughput
 from benchmarks.results import BenchResult, load_run, print_table, save_run
+from benchmarks.settings import BENCH
 from benchmarks.timing import benchmark
 
 ORIGINAL_FILE: Path = Path(
@@ -147,15 +148,17 @@ def parse_args(argv: list[str] | None = None) -> Args:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("video", type=Path, default=ORIGINAL_FILE, nargs="?", help="video to benchmark")
-    parser.add_argument("--warmup", type=int, default=1, help="unmeasured runs before each benchmark")
-    parser.add_argument("--repeat", type=int, default=5, help="measured runs per benchmark")
+    parser.add_argument(
+        "--warmup", type=int, default=BENCH.warmup, help="unmeasured runs before each benchmark"
+    )
+    parser.add_argument("--repeat", type=int, default=BENCH.repeat, help="measured runs per benchmark")
     parser.add_argument("--fps", type=float, default=8, help="frame rate of the frame reads")
     parser.add_argument("--width", type=int, default=320, help="frame width of the frame reads, in px")
     parser.add_argument("--height", type=int, default=180, help="frame height of the frame reads, in px")
     parser.add_argument(
         "--proxy-dir", type=Path, default=PATHS.proxy_dir, help="proxy cache used for the proxy read"
     )
-    parser.add_argument("--out", type=Path, default=PATHS.bench_dir, help="folder for the run JSON")
+    parser.add_argument("--out", type=Path, default=BENCH.out_dir, help="folder for the run JSON")
     parser.add_argument("--plot", action="store_true", help="also save a .png next to the JSON")
     parser.add_argument(
         "--from-json",

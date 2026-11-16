@@ -25,3 +25,4 @@ def setup_logging(verbose: bool, quiet: tuple[str, ...] = ()) -> None:
 def configure_stdout() -> None:
     """Write stdout as UTF-8, so non-ASCII file names print on Windows (cp1252 by default)."""
     sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    sys.stderr.reconfigure(encoding="utf-8")  # pyright: ignore[reportAttributeAccessIssue]

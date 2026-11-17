@@ -9,6 +9,7 @@ from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from amv.config import DecodingSettings
+from amv.io.end_card import detect_end_card
 from amv.io.ffmpeg import generate_file_id, make_audio_proxy, probe
 from amv.io.media import AudioInfo
 
@@ -24,6 +25,7 @@ COLUMNS = [
     "sample_rate",
     "channels",
     "codec",
+    "end_time",
 ]
 type SongKind = Literal["amv", "song"]
 
@@ -36,6 +38,7 @@ class AudioFile:
     song_id: str  # generate_file_id(path)
     audio: AudioInfo  # probe(path).audio, i.e. of the original
     kind: SongKind
+    video_duration: float | None  # probe(path).video.duration, for detect_end_card; None for songs
 
 
 def _discover_valid_files(
@@ -83,7 +86,15 @@ def _discover_valid_files(
             if media.audio is None:
                 raise ValueError(f"Got file with no audio stream: {file}")
             song_id = generate_file_id(file)
-            valid_files.append(AudioFile(file.resolve(), song_id, media.audio, kind))
+            valid_files.append(
+                AudioFile(
+                    file.resolve(),
+                    song_id,
+                    media.audio,
+                    kind,
+                    media.video.duration if media.video is not None else None,
+                )
+            )
     return valid_files
 
 
@@ -108,6 +119,12 @@ def build_song_table(
         audio_proxy_path: the cached wav
         duration, sample_rate, channels, codec: of the original's audio stream, not
             of the wav (which is pcm as set in settings.audio_proxy)
+        end_time: seconds of the original where the wav stops (task 3.8): an AMV's
+            end-card cut, or duration if nothing is cut
+
+    End cards: AMVs only (songs are never cut), and only if settings.end_card is not None.
+    detect_end_card gets the AMV's VIDEO duration, exactly as the video table passes it, so
+    the wav and the video proxy are cut at the same float.
 
     Args:
         amv_dir (str | os.PathLike): The folder with the reference AMVs.
@@ -115,8 +132,8 @@ def build_song_table(
         proxy_dir (str | os.PathLike): The proxy cache; created if missing.
         out_path (str | os.PathLike): The parquet file to write; its folder is created if
             missing. It is written to a temp name first, so it is never left half-written.
-        settings (DecodingSettings): Step 01's settings: both extension sets, probe_timeout
-            and audio_proxy are used.
+        settings (DecodingSettings): Step 01's settings: both extension sets, probe_timeout,
+            audio_proxy and end_card are used.
 
     Returns:
         pd.DataFrame: The table, exactly as written to out_path.
@@ -150,7 +167,13 @@ def build_song_table(
         )
         for i, file in bar:
             bar.set_postfix_str(file.song_id[:8])
-            audio_proxy_path = make_audio_proxy(file.path, proxy_dir, settings.audio_proxy)
+            end = (
+                detect_end_card(file.path, file.video_duration, settings.end_card, True)
+                if file.kind == "amv" and settings.end_card is not None and file.video_duration is not None
+                else None
+            )
+
+            audio_proxy_path = make_audio_proxy(file.path, proxy_dir, settings.audio_proxy, end=end)
 
             row = {
                 "song_id": file.song_id,
@@ -162,6 +185,7 @@ def build_song_table(
                 "sample_rate": file.audio.sample_rate,
                 "channels": file.audio.channels,
                 "codec": file.audio.codec,
+                "end_time": end if end is not None else file.audio.duration,
             }
             data.append(row)
             logger.debug(
@@ -175,6 +199,7 @@ def build_song_table(
         data,
         columns=COLUMNS,
     )
+    df["end_time"] = df["end_time"].astype("float64")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(".tmp.parquet")
     df.to_parquet(tmp_path)

@@ -15,6 +15,8 @@ SPECIFICATION
     no path in PATHS points into data/out/, where those tools write.
   - Values more than one step must agree on have one source: MUSIC.sample_rate defaults to
     DECODING.audio_proxy.sample_rate.
+  - DECODING.end_card (task 3.8) is an EndCardSettings, or None to turn end-card detection
+    off. (Decision: None instead of an `enabled` flag, so "off" is one state.)
 """
 
 import ast
@@ -32,6 +34,7 @@ from amv.config import (
     PATHS,
     AudioProxySettings,
     DecodingSettings,
+    EndCardSettings,
     MusicSettings,
     PathSettings,
     VideoProxySettings,
@@ -42,6 +45,7 @@ SECTIONS = [
     (DECODING, DecodingSettings),
     (DECODING.video_proxy, VideoProxySettings),
     (DECODING.audio_proxy, AudioProxySettings),
+    (DECODING.end_card, EndCardSettings),
     (MUSIC, MusicSettings),
 ]
 
@@ -97,6 +101,28 @@ def test_decoding_has_the_planned_values():
     assert DECODING.probe_timeout == 10
     assert DECODING.video_proxy == VideoProxySettings(width=640, preset="ultrafast", crf=28, timeout=300)
     assert DECODING.audio_proxy == AudioProxySettings(sample_rate=22050, channels=1, timeout=60)
+    assert DECODING.end_card == EndCardSettings(
+        scan=30,
+        fps=4,
+        width=64,
+        height=36,
+        threshold=2.0,
+        smooth=1.0,
+        min_tail=3.0,
+        lookback=6.0,
+        audio_rate=8000,
+        audio_window=0.05,
+        silence_db=-60.0,
+        min_gap=0.25,
+        min_dip=18.0,
+    )
+
+
+def test_end_card_detection_can_be_turned_off():
+    off = dataclasses.replace(DECODING, end_card=None)
+
+    assert off.end_card is None
+    assert off.video_proxy == DECODING.video_proxy
 
 
 def test_music_reads_the_wavs_step_01_writes():

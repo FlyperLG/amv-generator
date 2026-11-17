@@ -44,6 +44,16 @@ SPECIFICATION
     duration, sample_rate, channels, codec
                       of the ORIGINAL's audio stream (probe(original).audio),
                       not of the wav (which is always 22050 Hz mono pcm)
+    end_time          float64 seconds of the original where the wav stops (task 3.8): an
+                      AMV's end-card start, or `duration` when nothing is cut
+
+  End cards (task 3.8), the audio side of the video table's rule
+  - Only AMVs, and only if settings.end_card is not None. Songs are never searched.
+  - detect_end_card(original, probe(original).video.duration, settings.end_card,
+    has_audio=True): the VIDEO duration, exactly as the video table calls it (discovery
+    already guarantees audio), so an AMV's wav and video proxy are cut at the same float.
+    A found card -> make_audio_proxy(..., end=that time), otherwise end=None (an AMV
+    without a card keeps the wav it already had).
 
   Rules
   - Re-running is cheap: nothing changed -> no ffmpeg runs (wav mtimes unchanged)
@@ -54,13 +64,15 @@ SPECIFICATION
   - Empty folders give an empty table that still has every column.
 """
 
+import dataclasses
+import wave
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from amv.config import DECODING
-from amv.io.ffmpeg import generate_file_id, probe
+from amv.io.ffmpeg import audio_proxy_path, generate_file_id, probe
 from amv.io.songs import build_song_table
 from amv.io.videos import build_video_table
 
@@ -76,6 +88,7 @@ COLUMNS = {
     "sample_rate",
     "channels",
     "codec",
+    "end_time",
 }
 
 
@@ -286,3 +299,99 @@ def test_second_run_extracts_nothing_and_gives_the_same_table(dirs, amv, song):
 
     assert {p: p.stat().st_mtime_ns for p in dirs["proxy_dir"].iterdir()} == stamps
     pd.testing.assert_frame_equal(second, first)
+
+
+# --- End cards (task 3.8) ---------------------------------------------------------
+
+
+@pytest.fixture
+def carded_amv(make_amv_with_end_card):
+    """4 s of footage, then a 3 s static card, with audio under both."""
+    return make_amv_with_end_card("amvs/Carded AMV.mp4", footage=4.0, card=3.0)
+
+
+def wav_seconds(path) -> float:
+    with wave.open(str(path), "rb") as w:
+        return w.getnframes() / w.getframerate()
+
+
+def test_an_amvs_end_card_is_cut_from_the_wav(dirs, carded_amv):
+    row = row_of(build_song_table(**dirs, settings=DECODING), carded_amv)
+
+    assert row["end_time"] == pytest.approx(4.0, abs=1 / DECODING.end_card.fps)
+    assert wav_seconds(row["audio_proxy_path"]) == pytest.approx(row["end_time"], abs=0.01)
+    assert row["end_time"] < row["duration"]  # duration stays the original's
+
+
+def test_wav_and_video_proxy_are_cut_at_the_same_time(dirs, carded_amv, tmp_path):
+    (tmp_path / "library").mkdir()
+    videos = build_video_table(
+        dirs["amv_dir"], tmp_path / "library", dirs["proxy_dir"], tmp_path / "v.parquet", settings=DECODING
+    )
+
+    songs = build_song_table(**dirs, settings=DECODING)
+
+    assert row_of(songs, carded_amv)["end_time"] == row_of(videos, carded_amv)["end_time"]
+
+
+def test_without_a_card_end_time_is_the_duration_and_the_wav_is_unchanged(dirs, amv):
+    row = row_of(build_song_table(**dirs, settings=DECODING), amv)
+
+    assert row["end_time"] == row["duration"]
+    assert row["audio_proxy_path"] == str(audio_proxy_path(amv, dirs["proxy_dir"], DECODING.audio_proxy))
+
+
+def test_songs_are_never_cut(dirs, song):
+    row = row_of(build_song_table(**dirs, settings=DECODING), song)
+
+    assert row["end_time"] == row["duration"]
+    assert row["audio_proxy_path"] == str(audio_proxy_path(song, dirs["proxy_dir"], DECODING.audio_proxy))
+
+
+def test_detection_can_be_turned_off(dirs, carded_amv):
+    off = dataclasses.replace(DECODING, end_card=None)
+
+    row = row_of(build_song_table(**dirs, settings=off), carded_amv)
+
+    assert row["end_time"] == row["duration"]
+    assert row["audio_proxy_path"] == str(
+        audio_proxy_path(carded_amv, dirs["proxy_dir"], DECODING.audio_proxy)
+    )
+
+
+def test_end_time_is_float64(dirs, amv, carded_amv, song):
+    table = build_song_table(**dirs, settings=DECODING)
+
+    assert table["end_time"].dtype == "float64"
+
+
+def test_a_cut_amv_is_not_extracted_again(dirs, carded_amv):
+    first = build_song_table(**dirs, settings=DECODING)
+    wav = Path(row_of(first, carded_amv)["audio_proxy_path"])
+    stamp = wav.stat().st_mtime_ns
+
+    second = build_song_table(**dirs, settings=DECODING)
+
+    assert wav.stat().st_mtime_ns == stamp
+    pd.testing.assert_frame_equal(second, first)
+
+
+def test_the_wav_ends_where_the_song_ends(dirs, make_amv_with_end_card):
+    src = make_amv_with_end_card("amvs/Outro AMV.mp4", footage=4.0, card=3.0, song_end=2.5)
+
+    row = row_of(build_song_table(**dirs, settings=DECODING), src)
+
+    assert row["end_time"] == pytest.approx(2.5, abs=0.1)
+    assert wav_seconds(row["audio_proxy_path"]) == pytest.approx(row["end_time"], abs=0.01)
+
+
+def test_wav_and_video_proxy_end_at_the_same_song_end(dirs, make_amv_with_end_card, tmp_path):
+    src = make_amv_with_end_card("amvs/Outro AMV.mp4", footage=4.0, card=3.0, song_end=2.5)
+    (tmp_path / "library").mkdir()
+    videos = build_video_table(
+        dirs["amv_dir"], tmp_path / "library", dirs["proxy_dir"], tmp_path / "v.parquet", settings=DECODING
+    )
+
+    songs = build_song_table(**dirs, settings=DECODING)
+
+    assert row_of(songs, src)["end_time"] == row_of(videos, src)["end_time"]

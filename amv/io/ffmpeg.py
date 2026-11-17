@@ -300,10 +300,21 @@ def _video_args(settings: VideoProxySettings) -> list[str]:
     ]
 
 
+def _end_args(end: float | None) -> list[str]:
+    """The ffmpeg arguments that cut a proxy at end seconds; none for None, so old names stay."""
+    if end is None:
+        return []
+
+    if end <= 0:
+        raise ValueError(f"End needs to be greater than 0, was {end}.")
+    return ["-t", f"{end:.3f}"]
+
+
 def video_proxy_path(
     in_path: str | os.PathLike | Path,
     out_dir: str | os.PathLike | Path,
     settings: VideoProxySettings,
+    end: float | None = None,
 ) -> Path:
     """Return the path make_video_proxy uses for in_path with these settings.
 
@@ -314,20 +325,25 @@ def video_proxy_path(
         in_path (str | os.PathLike | Path): The source video.
         out_dir (str | os.PathLike | Path): The directory for proxies. It does not have to exist.
         settings (VideoProxySettings): The proxy settings; all but the timeout name the file.
+        end (float | None): Seconds of the source where the proxy stops (task 3.8, an
+            AMV's end card), rounded to ms; part of the name. None (default) keeps the
+            whole source and the name it had before end existed.
 
     Returns:
         Path: out_dir / "<video_uuid>_<settings_uuid>.mp4". The file may not exist yet.
 
     Raises:
         FileNotFoundError: If in_path does not exist.
-        NotADirectoryError: If out_dir exists but is a file."""
-    return _output_path(Path(in_path), Path(out_dir), ".mp4", _video_args(settings))
+        NotADirectoryError: If out_dir exists but is a file.
+        ValueError: If end <= 0."""
+    return _output_path(Path(in_path), Path(out_dir), ".mp4", _video_args(settings) + _end_args(end))
 
 
 def make_video_proxy(
     in_path: str | os.PathLike | Path,
     out_dir: str | os.PathLike | Path,
     settings: VideoProxySettings,
+    end: float | None = None,
 ) -> Path:
     """Transcode a video into a small, fast-to-decode proxy for analysis.
 
@@ -339,6 +355,9 @@ def make_video_proxy(
         in_path (str | os.PathLike | Path): The source video.
         out_dir (str | os.PathLike | Path): The directory for proxies; created if missing.
         settings (VideoProxySettings): The proxy settings; all but the timeout name the file.
+        end (float | None): Seconds of the source where the proxy stops (task 3.8, an
+            AMV's end card), rounded to ms; part of the name. None (default) keeps the
+            whole source and the name it had before end existed.
 
     Returns:
         Path: The path of the proxy, out_dir / "<video_uuid>_<settings_uuid>.mp4".
@@ -346,12 +365,13 @@ def make_video_proxy(
     Raises:
         FileNotFoundError: If in_path does not exist.
         NotADirectoryError: If out_dir exists but is a file.
+        ValueError: If end <= 0, before anything is created.
         RuntimeError: If ffmpeg fails or exceeds settings.timeout."""
     return _ffmpeg_to_file(
         in_path=Path(in_path),
         out_dir=Path(out_dir),
         suffix=".mp4",
-        ffmpeg_args=_video_args(settings),
+        ffmpeg_args=_video_args(settings) + _end_args(end),
         timeout=settings.timeout,
         task="video proxy",
     )
@@ -366,6 +386,7 @@ def audio_proxy_path(
     in_path: str | os.PathLike | Path,
     out_dir: str | os.PathLike | Path,
     settings: AudioProxySettings,
+    end: float | None = None,
 ) -> Path:
     """Return the path make_audio_proxy uses for in_path with these settings.
 
@@ -376,20 +397,25 @@ def audio_proxy_path(
         in_path (str | os.PathLike | Path): The source video or audio file.
         out_dir (str | os.PathLike | Path): The directory for the wav. It does not have to exist.
         settings (AudioProxySettings): The wav settings; all but the timeout name the file.
+        end (float | None): Seconds of the source where the wav stops (task 3.8, an
+            AMV's end card), rounded to ms; part of the name. None (default) keeps the
+            whole source and the name it had before end existed.
 
     Returns:
         Path: out_dir / "<video_uuid>_<settings_uuid>.wav". The file may not exist yet.
 
     Raises:
         FileNotFoundError: If in_path does not exist.
-        NotADirectoryError: If out_dir exists but is a file."""
-    return _output_path(Path(in_path), Path(out_dir), ".wav", _audio_args(settings))
+        NotADirectoryError: If out_dir exists but is a file.
+        ValueError: If end <= 0."""
+    return _output_path(Path(in_path), Path(out_dir), ".wav", _audio_args(settings) + _end_args(end))
 
 
 def make_audio_proxy(
     in_path: str | os.PathLike | Path,
     out_dir: str | os.PathLike | Path,
     settings: AudioProxySettings,
+    end: float | None = None,
 ) -> Path:
     """Extract the audio track of a media file as an uncompressed wav for music analysis.
 
@@ -401,6 +427,9 @@ def make_audio_proxy(
         in_path (str | os.PathLike | Path): The source video or audio file.
         out_dir (str | os.PathLike | Path): The directory for the wav; created if missing.
         settings (AudioProxySettings): The wav settings; all but the timeout name the file.
+        end (float | None): Seconds of the source where the wav stops (task 3.8, an
+            AMV's end card), rounded to ms; part of the name. None (default) keeps the
+            whole source and the name it had before end existed.
 
     Returns:
         Path: The path of the wav, out_dir / "<video_uuid>_<settings_uuid>.wav".
@@ -408,13 +437,14 @@ def make_audio_proxy(
     Raises:
         FileNotFoundError: If in_path does not exist.
         NotADirectoryError: If out_dir exists but is a file.
+        ValueError: If end <= 0, before anything is created.
         RuntimeError: If ffmpeg fails (e.g. the file has no audio stream) or exceeds
             settings.timeout."""
     return _ffmpeg_to_file(
         in_path=Path(in_path),
         out_dir=Path(out_dir),
         suffix=".wav",
-        ffmpeg_args=_audio_args(settings),
+        ffmpeg_args=_audio_args(settings) + _end_args(end),
         timeout=settings.timeout,
         task="audio proxy",
     )
@@ -593,3 +623,72 @@ def iter_frame_batches(
             timestamps = []
     if batched_frames:
         yield (np.array(timestamps), np.array(batched_frames))
+
+
+# --- Audio reading ------------------------------------------------------------
+
+
+def read_audio(
+    path: str | os.PathLike | Path,
+    sample_rate: int,
+    start: float = 0,
+    end: float | None = None,
+) -> np.ndarray:
+    """Decode a stretch of a file's audio into memory as mono float samples.
+
+    For short reads straight from an original (end-card refinement, task 3.8); whole songs go
+    through the cached wav of make_audio_proxy instead. start and end are input options
+    (before -i), as in iter_frames, so the range is [start, end) of the source.
+
+    Args:
+        path (str | os.PathLike | Path): The video or audio file.
+        sample_rate (int): The output rate in Hz; the audio is resampled and mixed to mono.
+        start (float): Time in seconds of the first sample. Defaults to 0.
+        end (float | None): Time in seconds at which to stop, exclusive. None reads to the end.
+
+    Returns:
+        np.ndarray: float32, shape (n,), in [-1, 1], n ≈ (end - start) * sample_rate. Empty if
+            start lies past the end of the audio.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If sample_rate <= 0, start < 0, or end <= start.
+        RuntimeError: If ffmpeg fails, e.g. the file has no audio stream or is not media.
+            The message contains ffmpeg's stderr."""
+    path = _file_exists(path)
+
+    if sample_rate <= 0:
+        raise ValueError(f"Sample rate needs to be greater than 0, got {sample_rate}.")
+
+    if start < 0 or end is not None and start >= end:
+        raise ValueError(f"Invalid start, and end configuration received: ({start}, {end}).")
+
+    seek_args: list[str] = ["-ss", str(start)]
+    if end is not None:
+        seek_args += ["-to", str(end)]
+
+    command = [
+        str(FFMPEG),
+        *seek_args,
+        "-i",
+        str(path),
+        "-map",
+        "0:a:0",
+        "-ac",
+        "1",
+        "-ar",
+        str(sample_rate),
+        "-f",
+        "f32le",
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "pipe:1",
+    ]
+
+    result = subprocess.run(command, capture_output=True)
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"ffmpeg read audio on path {path} failed: {message}")
+    return np.frombuffer(result.stdout, dtype="<f4").copy()

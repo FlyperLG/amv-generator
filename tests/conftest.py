@@ -70,3 +70,79 @@ def make_media(tmp_path):
         return out
 
     return _make
+
+
+@pytest.fixture
+def make_amv_with_end_card(tmp_path):
+    """Factory: an AMV-like clip whose footage ends in a static end card.
+
+    Usage in a test:  path = make_amv_with_end_card("amvs/a.mp4", footage=4.0, card=3.0)
+
+    The footage is full-frame noise (every frame differs, ~15 mean luma change at 64x36), the
+    card is one flat colour (0 change), so the card starts exactly at `footage` seconds.
+    Audio: by default a 440 Hz sine runs under both. With `song_end` (< footage), the sine
+    stops there, digital silence follows until the card, and an 880 Hz "jingle" plays under
+    the card, like a real outro: the song ends before the card fades in. `audio=False`
+    makes a video-only file.
+    Two more knobs for outros without real silence: `outro_start` (default: footage) starts
+    the jingle earlier, under the still moving footage, as when a title card animates in;
+    `gap_db` replaces the silence between song_end and outro_start with the song's sine
+    turned down by that many dB (e.g. -25), a quiet valley instead of digital silence.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        pytest.skip("ffmpeg not on PATH")
+
+    def _make(
+        name: str,
+        *,
+        footage: float = 4.0,
+        card: float = 3.0,
+        song_end: float | None = None,
+        outro_start: float | None = None,
+        gap_db: float | None = None,
+        audio: bool = True,
+        rate: str = "24000/1001",
+    ) -> Path:
+        out = tmp_path / name
+        out.parent.mkdir(parents=True, exist_ok=True)
+        size = "320x180"
+        if not audio:
+            audio_inputs, audio_graph = [], ""
+        elif song_end is None:
+            audio_inputs = [
+                "-f",
+                "lavfi",
+                "-i",
+                f"sine=frequency=440:sample_rate=44100:duration={footage + card}",
+            ]
+            audio_graph = ";[2:a]anull[a]"
+        else:
+            outro = footage if outro_start is None else outro_start
+            gap = (
+                f"anullsrc=r=44100:cl=mono:d={outro - song_end}"
+                if gap_db is None
+                else f"sine=frequency=440:sample_rate=44100:duration={outro - song_end},volume={gap_db}dB"
+            )
+            jingle = f"sine=frequency=880:sample_rate=44100:duration={footage + card - outro}"
+            audio_inputs = [
+                "-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=44100:duration={song_end}",
+                "-f", "lavfi", "-i", gap,
+                "-f", "lavfi", "-i", jingle,
+            ]  # fmt: skip
+            audio_graph = ";[2:a][3:a][4:a]concat=n=3:v=0:a=1[a]"
+        noise = f"nullsrc=s={size}:r={rate}:d={footage},geq=lum='random(1)*255':cb=128:cr=128"
+        cmd = [
+            ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", noise,
+            "-f", "lavfi", "-i", f"color=c=0x305080:s={size}:r={rate}:d={card}",
+            *audio_inputs,
+            "-filter_complex", f"[0:v][1:v]concat=n=2:v=1:a=0[v]{audio_graph}",
+            "-map", "[v]", *(["-map", "[a]", "-ac", "1"] if audio else []),
+            "-c:v", "libx264", "-preset", "ultrafast",
+            str(out),
+        ]  # fmt: skip
+        subprocess.run(cmd, check=True)
+        return out
+
+    return _make

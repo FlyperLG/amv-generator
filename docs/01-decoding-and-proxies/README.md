@@ -48,8 +48,9 @@ Every later step (shot detection, CLIP, optical flow, dataset building) reads th
 | 3.5 Timing printout | ✅ done | `benchmarks/bench_01_decoding.py` | (benchmark, no tests) |
 | 3.6 Video table | ✅ done | `amv/io/videos.py::build_video_table`, `scripts/build_video_table.py` | `tests/io/test_videos.py` |
 | 3.7 Song table | ✅ done | `amv/io/songs.py::build_song_table`, `scripts/build_song_table.py` | `tests/io/test_songs.py` |
+| 3.8 End-card cut | ✅ done (incl. 3.8b audio refinement, 3.8c valley fallback) | `amv/io/end_card.py`, `amv/io/ffmpeg.py::read_audio`, `amv/config.py`, `amv/io/ffmpeg.py`, both tables, `amv/music/analysis.py` | `tests/io/test_end_card.py`, `tests/io/test_read_audio.py` + additions in `test_config.py`, `test_video_proxy.py`, `test_audio_proxy.py`, `test_videos.py`, `test_songs.py`, `tests/music/test_analysis.py` |
 
-Order: 3.5 → 3.6. The benchmark (3.5) needs the frame reader. The video table (3.6) collects the outputs of all the other tasks, so it comes last.
+Order: 3.5 → 3.6. The benchmark (3.5) needs the frame reader. The video table (3.6) collects the outputs of all the other tasks, so it comes last. 3.8 was added later and changes 3.2, 3.4, 3.6 and 3.7.
 
 ### 3.1 Probe ✅
 *Implemented as `probe(path, timeout) -> MediaInfo` (typed dataclasses instead of a dict).*
@@ -110,6 +111,84 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 - Songs get a wav too, even `.wav` files, because step 02 only reads 22 050 Hz mono and never resamples.
 - `data/songs/` must exist (a missing folder raises, as in 3.6), even while it is empty.
 
+### 3.8 End-card cut (AMVs only) ✅
+*Added 2026-11-16, after a batch of new downloads. Many AMVs end with a title card and/or the editor's logo: seconds of nearly frozen video with no relation to the edit (e.g. PARANOIA: the song ends ~197 s, then a "PARANOIA" title card, then ~11 s of a static "Z" logo). Left in, they become one long cut-free "shot" with unrelated music in every later step, and they distort the benchmarks and plots.*
+
+**Idea:** footage changes almost every frame, while a card is frozen. So the card is the static stretch that runs **up to the end of the file**. It is cut from the **proxies**, never from the originals: no second copy of anything on disk, and retuning only re-encodes the AMVs whose cut moved.
+
+**Measured before building (reference implementation, default settings, 28 AMVs in `data/amvs/`):** 21 get a cut, 7 don't. Most cuts are −11.2 s (the same editor's logo outro). Footage scores ~10–20 on the motion curve, a card scores ~0, so the default threshold of 2 has a wide margin. Known limitation: an *animated* title card before the logo (PARANOIA's glitch text) moves too much to count as static and stays in, about 4 s. Short cuts (Fire & Ice −3.5 s, FREAKED OUT −4.0 s) were checked by eye: a fade to black and a title outro, both fine to drop.
+
+**Implementation plan, in this order** (each step makes its own tests green; spec = the SPECIFICATION docstring of each test file):
+
+1. **Settings**, `amv/config.py` (spec: `tests/test_config.py`)
+   - New frozen `EndCardSettings` in the step 01 section, above `DecodingSettings`: `scan=30` (s searched at the end; the longest card measured was 11.5 s), `fps=4`, `width=64`, `height=36` (decode size of the motion curve), `threshold=2.0` (mean luma change, 0–255), `smooth=1.0` (s of running median), `min_tail=3.0` (s; shorter static tails are kept).
+   - `DecodingSettings.end_card: EndCardSettings | None = field(default_factory=EndCardSettings)`. `None` turns it off (one state instead of an `enabled` flag).
+   - The settings are **not** part of any file name. The detected cut time is (step 3).
+
+2. **Detection**, `amv/io/end_card.py`. The stub with docstrings exists; fill in the three bodies (spec: `tests/io/test_end_card.py`).
+   - `motion_curve(frames)`: cast to float **before** `np.diff` (uint8 wraps around: 0 → 255 would be 1), then the mean of the absolute difference over (h, w).
+   - `find_end_card_start(motion, fps, threshold, smooth, min_tail)`: validate, run a median over an odd window of `round(smooth*fps)` samples (truncated at the edges; a list comprehension with `np.median` is fast enough for ~240 samples, or use `scipy.ndimage.median_filter`), find the last non-static index, and `j` = that + 1. Check `(len(motion) + 1 - j) / fps >= min_tail`, then return `j / fps`.
+   - `detect_end_card(path, duration, settings)`: `start = max(0, duration - scan)`, collect `iter_frames(path, fps, width, height, start=start, gray=True)` into one array, then call the two functions. Return `start + relative` (video time, not window time).
+
+3. **Cutting**, `amv/io/ffmpeg.py` (spec: the "Cutting the end" sections of `test_video_proxy.py` / `test_audio_proxy.py`)
+   - `make_video_proxy`, `video_proxy_path`, `make_audio_proxy`, `audio_proxy_path` get a keyword `end: float | None = None`.
+   - A small helper returns `[]` for `None`, raises `ValueError` for `end <= 0` and otherwise returns `["-t", f"{end:.3f}"]`. Append it to `_video_args(settings)` / `_audio_args(settings)` at every call site. As an output option after `-i`, `-t` means "stop after this many seconds", the same as an absolute end, because proxies always start at 0.
+   - The ms rounding is the `:.3f`. It makes the cut and the name agree.
+   - `end=None` must add **nothing**, so the existing proxy names stay the same (the tests pin both settings uuids). Validate before `_ffmpeg_to_file` creates `out_dir`.
+
+4. **Tables**, `amv/io/videos.py`, `amv/io/songs.py` (spec: the "End cards" sections of `test_videos.py` / `test_songs.py`)
+   - New last column `end_time` (float64) in both `COLUMNS` lists.
+   - In the processing loop: `end = detect_end_card(file.path, <video duration>, settings.end_card)` if `file.kind == "amv"` and `settings.end_card is not None`, else `None`. Pass `end=end` to the proxy function. `end_time = end if end is not None else <the row's duration>`.
+   - Video table: `file.video.duration` is already there.
+   - Song table: `AudioFile` only has the audio info. Add `video_duration: float | None` and fill it in discovery from `media.video` (the probe already returns it). It **must** be the video duration, the same value the video table passes, because the test requires both tables to give the *exact* same `end_time`.
+   - Library videos and songs are never searched.
+
+5. **Music cache**, `amv/music/analysis.py` (spec: `test_a_cache_made_from_another_wav_is_analysed_again`)
+   - Why: the music cache is named `<song_id>_<settings_id>`, and an AMV keeps its `song_id` when its wav is re-cut. Tuning back and forth brings back an *older* wav, which the mtime rule alone would pair with the newer cache of the other cut.
+   - Fix: `_save` also writes `source=str(audio_path.resolve())` into the dense npz. `_is_cached` additionally requires that stored `source` to equal the current resolved wav path. An old cache without the key counts as stale and is analysed again once.
+
+6. **Run it.** `python -m scripts.build_video_table`, `python -m scripts.build_song_table`, `python -m scripts.analyse_music`. The old full-length proxies of carded AMVs stay in `data/proxies/` until you delete them by hand (as after any settings change).
+
+**After the build:** write the measured numbers here (how many AMVs are cut, seconds removed), and `checks/plot_music.py` should show no outro anymore. Tuning ideas if needed: a higher `threshold` catches animated title cards, at the risk of eating slow fade-out endings.
+
+#### 3.8b Audio refinement: cut where the song ends ✅
+*Found 2026-11-17 after the first build: the video-only cut is a little late. You can hear it in the wav: the song fades out, then the outro's sound comes up for 1–2 s. Cause: a title card or a logo fading in still moves, so it only counts as static once it has settled. Measured on the 20 cut AMVs: 16 have a digital silence (−90 to −240 dB) 0.9–6 s before the video cut, between the song and the outro. Four have none (HEROES, Awaken, Fire & Ice, Super Villain) and keep their video cut.*
+
+**Rule:** the video finds *that* there is a card, the audio finds *when* the song ended. After a video cut, decode `lookback` (6) seconds of audio before it at 8 kHz, compute the loudness per 50 ms window, and look for silent gaps (below −60 dBFS, at least 0.25 s; shorter ones are pauses inside the music). If there is one, the cut moves back to the start of the **last** gap. Otherwise the video cut stays. The cut never moves later. Cost: one extra ~6 s audio decode per carded AMV.
+
+**Plan, in this order:**
+
+1. **Settings,** `EndCardSettings` in `amv/config.py`, five new fields after `min_tail`: `lookback=6.0` (s before the video cut searched; 0 = off), `audio_rate=8000` (Hz), `audio_window=0.05` (s per loudness value), `silence_db=-60.0` (dBFS), `min_gap=0.25` (s). Spec: `tests/test_config.py`.
+2. **Audio reader,** `read_audio(path, sample_rate, start=0, end=None)` in `amv/io/ffmpeg.py` (stub with docstring at the end of the file). The audio counterpart of `iter_frames`: `-ss`/`-to` before `-i`, then `-map 0:a:0 -ac 1 -ar <rate> -f f32le pipe:1`. Read stdout as **bytes** with `subprocess.run(..., capture_output=True)`; `run_subprocess` decodes text, so it can't be used. Then `np.frombuffer(..., np.float32)`. A non-zero exit raises `RuntimeError` with stderr; that also covers a file without audio (`-map 0:a?` doesn't help: ffmpeg refuses an output without streams). Spec: `tests/io/test_read_audio.py`.
+3. **Two pure functions** in `amv/io/end_card.py` (stubs with docstrings):
+   - `rms_db(samples, sample_rate, window)`: windows of `round(window*rate)` samples, drop the partial last one, reshape to `(k, n)`, cast to float64, `sqrt(mean(x²))`, floor at `1e-12`, `20*log10`.
+   - `find_song_end(db, window, silence_db, min_gap)`: walk the runs of `db < silence_db` and keep the start of the last run with `count * window >= min_gap`. Return `float(start * window)` or `None`. Careful: `5 * 0.05` must count as 0.25 (`test_a_gap_of_exactly_min_gap_counts`).
+4. **`detect_end_card(path, duration, settings, has_audio)`:** the new 4th parameter is already in the signature. After your existing video pass: if `has_audio` and `settings.lookback > 0`, set `a0 = max(0.0, cut - lookback)`, call `read_audio(path, audio_rate, start=a0, end=cut)`, then `rms_db` and `find_song_end`, and return `a0 + rel`, or `cut` if `rel` is `None`. A gap that began before the window is clipped to `a0` (the cut is still inside silence). Spec: `tests/io/test_end_card.py`.
+5. **Tables:** the video table needs to know whether the file has audio. Add `has_audio: bool` to `VideoFile` and fill it in discovery from `media.audio is not None`; pass it as the 4th argument. The song table passes `True` (its discovery already rejects files without audio). Spec: the new tests at the end of `test_videos.py` / `test_songs.py`.
+6. **Rebuild** both tables and `analyse_music`. The cut AMVs get new proxy names (their `-t` changed); the old ones can be deleted by hand.
+
+*Validated before handing over (temporary reference, then reverted): 720 tests green. On the real AMVs the cuts move back exactly as in the scratch prototype: PARANOIA 201.5 → 196.1 s, the end of the song in the contact sheet.*
+
+#### 3.8c Valley fallback: outros without silence ✅
+*Found 2026-11-17 by listening to the four AMVs that kept their video cut: Awaken and Super Villain still play 1–3 s of outro; HEROES and Fire & Ice are fine. Awaken fades out to −58 dB, just above `silence_db`, before the outro comes up; Super Villain dips to about −26 dB and the outro starts loud before the card has settled.*
+
+**Rule:** if `find_song_end` finds no gap, `find_valley` takes the quietest 50 ms window of the same lookback curve. It counts only if it lies at least `min_dip` (18) dB below the loudest window **before** it (the song) **and** the loudest window **after** it (the outro coming back up). A plain fade-out has almost no rise after it, so it never counts.
+
+| AMV (50 ms windows) | below song | below outro | moves? |
+|---|---|---|---|
+| Awaken | 40.1 dB | 49.1 dB | ✅ 194.87 → 193.17 s |
+| Super Villain | 23.6 dB | 22.6 dB | ✅ 142.74 → 139.99 s |
+| HEROES | 16.3 dB | 12.7 dB | no (correct) |
+| Fire & Ice | 14.9 dB | 6.6 dB | no (correct) |
+
+18 dB sits between HEROES' 12.7 and Super Villain's 22.6. Checked with a temporary reference against the current table: exactly these two AMVs change, all others keep their cut.
+
+**Plan:**
+1. `amv/config.py`: `min_dip: float = 18.0` after `min_gap` (dB a valley must lie below song and outro). Spec: `tests/test_config.py`.
+2. `amv/io/end_card.py::find_valley(db, window, min_dip)` (stub with docstring): validate (`ndim`, `window > 0`, `min_dip > 0`), return `None` for an empty curve, `i = int(np.argmin(db))` (the first of equal minima), then check `db[:i+1].max() - db[i] >= min_dip` and `db[i:].max() - db[i] >= min_dip`. Return `float(i * window)` or `None`. Spec: the `find_valley` section of `tests/io/test_end_card.py`.
+3. `detect_end_card`: if `rel` from `find_song_end` is `None`, set `rel = find_valley(db, settings.audio_window, settings.min_dip)` before the final return. Spec: `test_without_silence_the_cut_moves_into_the_valley`, `test_a_shallow_valley_keeps_the_video_cut`.
+4. Rebuild both tables. Only Awaken and Super Villain get new proxies; the music cache re-analyses just those two wavs.
+
 ## 4. Verification
 
 - [x] `videos.parquet` has correct duration/fps for the AMV (Blue Lock, re-downloaded as H.264: 132.93 s, 30000/1001, 3984 frames, which is consistent: 3984 / 29.97 = 132.93 s; matches ffprobe)
@@ -134,7 +213,7 @@ Add a small benchmark script that prints, for the Blue Lock AMV:
 
 ## 7. Done when
 
-All videos have proxies plus a `videos.parquet` row, every AMV and song has a wav plus a `songs.parquet` row, `iter_frames` streams batches correctly, and the benchmark numbers are written down in §8 Measured.
+All videos have proxies plus a `videos.parquet` row, AMV end cards are cut from both proxies (3.8), every AMV and song has a wav plus a `songs.parquet` row, `iter_frames` streams batches correctly, and the benchmark numbers are written down in §8 Measured.
 
 ## 8. Measured
 

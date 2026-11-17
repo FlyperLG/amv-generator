@@ -98,7 +98,7 @@ def cache_paths(song_id: str, cache_dir: str | os.PathLike, settings: MusicSetti
     )
 
 
-def _save(analysis: SongAnalysis, paths: tuple[Path, Path], settings: MusicSettings) -> None:
+def _save(analysis: SongAnalysis, paths: tuple[Path, Path], source: Path, settings: MusicSettings) -> None:
     """Write an analysis to its two cache files, creating the folder if missing.
 
     First "settings_<settings_id>.json" with the settings, so a human can tell what an id
@@ -108,6 +108,8 @@ def _save(analysis: SongAnalysis, paths: tuple[Path, Path], settings: MusicSetti
     Args:
         analysis (SongAnalysis): The analysis to write.
         paths (tuple[Path, Path]): The beat table and dense paths from cache_paths.
+        source (Path): The wav the analysis was made from; its resolved path is stored in
+            the npz as "source", so _is_cached can tell two wavs of one song_id apart.
         settings (MusicSettings): The settings the analysis was made with."""
     beats_path, dense_path = paths
     cache_dir = beats_path.parent
@@ -123,6 +125,7 @@ def _save(analysis: SongAnalysis, paths: tuple[Path, Path], settings: MusicSetti
     tmp_dense_path = dense_path.with_suffix(".tmp.npz")
     np.savez(
         tmp_dense_path,
+        source=str(source.resolve()),
         times=analysis.dense.times,
         values=analysis.dense.values,
         names=np.array(analysis.dense.names),
@@ -238,10 +241,17 @@ def _analyse(y: np.ndarray, sample_rate: int, settings: MusicSettings, model: Au
 
 
 def _is_cached(paths: tuple[Path, Path], audio_path: Path) -> bool:
-    """Whether both cache files exist and are newer than the wav (the skip rule of step 01)."""
+    """Whether both cache files exist, were made from this wav and are newer than it.
+
+    The source check comes first: an AMV keeps its song_id when its end-card cut changes,
+    and switching back brings an older wav, which the mtime rule alone would accept. A
+    cache without a "source" (made before task 3.8) is stale."""
     beats_path, dense_path = paths
     if not (beats_path.exists() and dense_path.exists()):
         return False
+    with np.load(dense_path) as z:
+        if "source" not in z or str(z["source"]) != str(audio_path.resolve()):
+            return False
     audio_mtime = audio_path.stat().st_mtime_ns
     return audio_mtime < beats_path.stat().st_mtime_ns and audio_mtime < dense_path.stat().st_mtime_ns
 
@@ -259,7 +269,7 @@ def _compute_and_save(
     start = time.perf_counter()
     audio, sample_rate = load_audio(audio_path, settings.sample_rate)
     analysis = _analyse(y=audio, sample_rate=sample_rate, settings=settings, model=model)
-    _save(analysis=analysis, paths=paths, settings=settings)
+    _save(analysis=analysis, paths=paths, source=audio_path, settings=settings)
     logger.debug("Analysed song %s in %.1f s.", song_id, time.perf_counter() - start)
     return analysis
 
@@ -273,8 +283,8 @@ def analyse_song(
 ) -> SongAnalysis:
     """Get one song's analysis: from the cache if it is up to date, otherwise computed and cached.
 
-    The cache is up to date if both files exist and are newer than the wav; then the model is
-    not called.
+    The cache is up to date if both files exist, were made from this wav (its resolved path)
+    and are newer than it; then the model is not called.
 
     Args:
         song_id (str): The song's id from the song table; it names the cache files.

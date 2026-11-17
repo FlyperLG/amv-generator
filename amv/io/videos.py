@@ -9,6 +9,7 @@ from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from amv.config import DecodingSettings
+from amv.io.end_card import detect_end_card
 from amv.io.ffmpeg import generate_file_id, make_video_proxy, probe
 from amv.io.media import VideoInfo
 
@@ -30,6 +31,7 @@ COLUMNS = [
     "codec",
     "proxy_width",
     "proxy_height",
+    "end_time",
 ]
 type VideoKind = Literal["amv", "library"]
 
@@ -43,6 +45,7 @@ class VideoFile:
     video: VideoInfo  # probe(path).video, i.e. of the original
     kind: VideoKind
     series: str | None  # first folder below library_dir; None for AMVs
+    has_audio: bool  # probe(path).audio is not None
 
 
 def _discover_valid_files(
@@ -90,7 +93,16 @@ def _discover_valid_files(
             if media.video is None:
                 raise ValueError(f"Got file with no video stream: {file}")
             video_id = generate_file_id(file)
-            valid_files.append(VideoFile(file.resolve(), video_id, media.video, kind, series))
+            valid_files.append(
+                VideoFile(
+                    file.resolve(),
+                    video_id,
+                    media.video,
+                    kind,
+                    series,
+                    media.audio is not None,
+                )
+            )
     return valid_files
 
 
@@ -115,6 +127,13 @@ def build_video_table(
         duration, fps, is_vfr, width, height, n_frames, codec: of the original, not the
             proxy; fps is an exact fraction string ("30000/1001"), n_frames a nullable Int64
         proxy_width, proxy_height: the proxy's size, as iter_frames needs it
+        end_time: seconds of the original where the proxy stops (task 3.8): the AMV's
+            end-card cut, or duration if nothing is cut. Later steps never read past it.
+
+    End cards: AMVs only (library videos are never cut), and only if settings.end_card is
+    not None. detect_end_card runs on the original before its proxy is made; a found cut
+    becomes make_video_proxy(..., end=cut), otherwise end=None keeps the proxy it had.
+    The song table makes the same call, so an AMV's wav ends at the same time.
 
     Args:
         amv_dir (str | os.PathLike): The folder with the reference AMVs.
@@ -123,8 +142,8 @@ def build_video_table(
         proxy_dir (str | os.PathLike): The proxy cache; created if missing.
         out_path (str | os.PathLike): The parquet file to write; its folder is created if
             missing. It is written to a temp name first, so it is never left half-written.
-        settings (DecodingSettings): Step 01's settings: video_extensions, probe_timeout
-            and video_proxy are used.
+        settings (DecodingSettings): Step 01's settings: video_extensions, probe_timeout,
+            video_proxy and end_card are used.
 
     Returns:
         pd.DataFrame: The table, exactly as written to out_path.
@@ -159,7 +178,13 @@ def build_video_table(
         )
         for i, file in bar:
             bar.set_postfix_str(file.video_id[:8])
-            video_proxy_path = make_video_proxy(file.path, proxy_dir, settings.video_proxy)
+            end = (
+                detect_end_card(file.path, file.video.duration, settings.end_card, file.has_audio)
+                if file.kind == "amv" and settings.end_card is not None
+                else None
+            )
+
+            video_proxy_path = make_video_proxy(file.path, proxy_dir, settings.video_proxy, end=end)
 
             proxy_media = probe(video_proxy_path, settings.probe_timeout)
             assert proxy_media.video is not None  # Should never be None
@@ -179,6 +204,7 @@ def build_video_table(
                 "codec": file.video.codec,
                 "proxy_width": proxy_media.video.width,
                 "proxy_height": proxy_media.video.height,
+                "end_time": end if end is not None else file.video.duration,
             }
             data.append(row)
             logger.debug(
@@ -193,6 +219,7 @@ def build_video_table(
         columns=COLUMNS,
     )
     df["n_frames"] = df["n_frames"].astype("Int64")
+    df["end_time"] = df["end_time"].astype("float64")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(".tmp.parquet")
     df.to_parquet(tmp_path)

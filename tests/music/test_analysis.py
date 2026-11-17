@@ -50,6 +50,12 @@ SPECIFICATION
   analyse_song(song_id, audio_path, cache_dir, settings, model) -> SongAnalysis
   - If both cache files exist and are newer than audio_path: loaded and returned, the model
     is not called.
+  - ...but only if the cache was made from THIS wav (its resolved path). A cache made from
+    another wav of the same song_id is analysed again, however old that wav is. (Added
+    with step 01 task 3.8: an AMV's wav name changes with its end-card cut, and retuning
+    the cut back and forth brings back an OLDER wav, which the mtime rule alone would pair
+    with the newer cache of the other cut.) The path is stored INSIDE the dense npz (key
+    "source", a str), so the cache stays two files plus the settings sidecar.
   - Otherwise the full chain, with the settings passed through:
         y, sr   = load_audio(audio_path, sample_rate)
         grid    = build_beat_grid(clean_beats(beats), downbeats, ...)  beats from detect_beats(y, sr, model)
@@ -91,6 +97,7 @@ SPECIFICATION
 import dataclasses
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -467,6 +474,22 @@ def test_a_song_newer_than_its_cache_is_analysed_again(song, settings, cache_dir
     analyse_song("loop", path, cache_dir, settings, model)
 
     assert model.calls == 2
+
+
+def test_a_cache_made_from_another_wav_is_analysed_again(song, settings, cache_dir):
+    """Two cuts of the same AMV: same song_id, different wavs; the other wav is OLDER than the cache."""
+    path, model = song
+    other = path.with_name("loop_cut.wav")
+    shutil.copy(path, other)
+    past = path.stat().st_mtime_ns - 10**10
+    os.utime(other, ns=(past, past))
+
+    analyse_song("loop", path, cache_dir, settings, model)
+    analyse_song("loop", other, cache_dir, settings, model)
+    assert model.calls == 2
+
+    analyse_song("loop", path, cache_dir, settings, model)
+    assert model.calls == 3
 
 
 def test_a_missing_file_is_analysed_again(song, settings, cache_dir):

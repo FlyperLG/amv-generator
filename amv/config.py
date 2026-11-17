@@ -73,6 +73,25 @@ class AudioProxySettings:
 
 
 @dataclass(frozen=True, slots=True)
+class EndCardSettings:
+    """Task 3.8: how the static end card (title, editor logo) at the end of an AMV is found."""
+
+    scan: float = 30  # seconds at the end of an AMV that are searched
+    fps: float = 4  # frames per second decoded for the motion curve
+    width: int = 64  # px of the decoded frames
+    height: int = 36  # px
+    threshold: float = 2.0  # mean luma change (0-255) below which the smoothed curve is static
+    smooth: float = 1.0  # seconds of the running median, so one blip doesn't split a card
+    min_tail: float = 3.0  # seconds; a shorter static tail is kept (held frame, slow ending)
+    lookback: float = 6.0  # seconds before the video cut searched for the song's end; 0 turns it off
+    audio_rate: int = 8000  # Hz the lookback audio is decoded at
+    audio_window: float = 0.05  # seconds per loudness value
+    silence_db: float = -60.0  # dBFS; a quieter window counts as silent
+    min_gap: float = 0.25  # seconds; a shorter silence is a pause inside the music
+    min_dip: float = 18.0  # dB a valley must lie below song and outro when there's no silence
+
+
+@dataclass(frozen=True, slots=True)
 class DecodingSettings:
     """Step 01: finding, probing and proxying the source media."""
 
@@ -81,6 +100,7 @@ class DecodingSettings:
     probe_timeout: float | None = 10  # seconds per ffprobe call
     video_proxy: VideoProxySettings = field(default_factory=VideoProxySettings)
     audio_proxy: AudioProxySettings = field(default_factory=AudioProxySettings)
+    end_card: EndCardSettings | None = field(default_factory=EndCardSettings)
 
 
 DECODING = DecodingSettings()

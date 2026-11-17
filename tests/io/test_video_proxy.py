@@ -39,6 +39,17 @@ SPECIFICATION
   - The path make_video_proxy returns for these settings, computed without
     running ffmpeg or creating anything (not even out_dir).
 
+  Cutting the end (task 3.8): an optional keyword `end: float | None = None`
+  - None: the whole source, with exactly the name it had before `end` existed (the settings
+    part is pinned below), so the proxies already on disk stay valid.
+  - A number: the proxy stops at `end` seconds of the source.
+  - end is part of the name: another end gives another file and keeps the old one; the
+    same end gives the same file. It is rounded to milliseconds first, so 1.5 and
+    1.5000001 name (and cut) the same file. (Decision: the name follows the CUT, not the
+    detection settings, so retuning detection only re-encodes the AMVs whose cut moved.)
+  - end <= 0 -> ValueError, before ffmpeg runs and before anything is created.
+  - video_proxy_path(..., end=...) predicts the path for that end.
+
   Skipping and re-doing work
   - If an up-to-date proxy already exists, the call returns its path without
     re-encoding it (the proxy file is left untouched).
@@ -354,3 +365,76 @@ def test_path_follows_the_settings(make_media, out_dir, change):
     assert video_proxy_path(str(src), str(out_dir), DECODING.video_proxy) == video_proxy_path(
         src, out_dir, DECODING.video_proxy
     )
+
+
+# --- Cutting the end (task 3.8) -------------------------------------------------
+
+DEFAULT_VIDEO_SETTINGS_ID = "7653e33e-4305-5c35-9455-c145f48bb433"  # the pre-3.8 name of DECODING.video_proxy
+
+
+def test_without_end_the_name_is_unchanged(make_media, out_dir):
+    src = make_media("clip.mp4", video=True, audio=False, duration=1.0)
+
+    path = video_proxy_path(src, out_dir, DECODING.video_proxy)
+
+    assert path == video_proxy_path(src, out_dir, DECODING.video_proxy, end=None)
+    assert path.stem.split("_")[1] == DEFAULT_VIDEO_SETTINGS_ID
+
+
+def test_end_cuts_the_proxy(make_media, out_dir):
+    src = make_media("clip.mp4", video=True, audio=False, duration=3.0)
+    fps = float(probe(src, DECODING.probe_timeout).video.fps)
+
+    proxy = make_video_proxy(src, out_dir, DECODING.video_proxy, end=1.5)
+
+    assert probe(proxy, DECODING.probe_timeout).video.duration == pytest.approx(1.5, abs=1 / fps)
+
+
+def test_end_is_part_of_the_name(make_media, out_dir):
+    src = make_media("clip.mp4", video=True, audio=False, duration=3.0)
+    full = make_video_proxy(src, out_dir, DECODING.video_proxy)
+
+    cut = make_video_proxy(src, out_dir, DECODING.video_proxy, end=1.5)
+
+    assert cut != full
+    assert cut.name.split("_")[0] == full.name.split("_")[0]  # same video_id
+    assert full.is_file()  # the old one is kept
+    assert video_proxy_path(src, out_dir, DECODING.video_proxy, end=2.0) != cut
+
+
+def test_end_is_rounded_to_milliseconds(make_media, out_dir):
+    src = make_media("clip.mp4", video=True, audio=False, duration=1.0)
+
+    assert video_proxy_path(src, out_dir, DECODING.video_proxy, end=1.5) == video_proxy_path(
+        src, out_dir, DECODING.video_proxy, end=1.5000001
+    )
+
+
+def test_path_with_end_matches_make_video_proxy(make_media, out_dir):
+    src = make_media("clip.mp4", video=True, audio=False, duration=3.0)
+
+    predicted = video_proxy_path(src, out_dir, DECODING.video_proxy, end=1.5)
+
+    assert make_video_proxy(src, out_dir, DECODING.video_proxy, end=1.5) == predicted
+
+
+def test_same_end_reuses_the_cut_proxy(make_media, out_dir):
+    src = make_media("clip.mp4", video=True, audio=False, duration=3.0)
+    first = make_video_proxy(src, out_dir, DECODING.video_proxy, end=1.5)
+    stamp = first.stat().st_mtime_ns
+
+    second = make_video_proxy(src, out_dir, DECODING.video_proxy, end=1.5)
+
+    assert second == first
+    assert second.stat().st_mtime_ns == stamp
+
+
+@pytest.mark.parametrize("end", [0.0, -1.0])
+def test_end_must_be_positive(make_media, tmp_path, end):
+    src = make_media("clip.mp4", video=True, audio=False, duration=1.0)
+    out_dir = tmp_path / "not_created"
+
+    with pytest.raises(ValueError):
+        make_video_proxy(src, out_dir, DECODING.video_proxy, end=end)
+
+    assert not out_dir.exists()

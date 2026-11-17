@@ -129,7 +129,7 @@ def fake_cache(tmp_path, kick_loop):
     sf.write(wav, y, SR)
     cache_dir = tmp_path / "music"
     analysis = make_analysis(make_beats(beat_times), duration=len(y) / SR)
-    _save(analysis, cache_paths("loop01", cache_dir, MUSIC), MUSIC)
+    _save(analysis, cache_paths("loop01", cache_dir, MUSIC), wav, MUSIC)
     table = tmp_path / "songs.parquet"
     pd.DataFrame(
         {"song_id": ["loop01"], "name": ["Kick Loop [t1].wav"], "audio_proxy_path": [str(wav)]}

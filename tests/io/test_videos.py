@@ -39,6 +39,19 @@ SPECIFICATION
                        often has none)
     proxy_width, proxy_height
                        size of the proxy file, so later steps can call iter_frames
+    end_time           float64 seconds of the original where the proxy stops (task 3.8):
+                       the end-card start from detect_end_card, or `duration` when
+                       nothing is cut. Later steps never read past it.
+
+  End cards (task 3.8)
+  - Only AMVs are searched, and only if settings.end_card is not None. Library videos
+    are never cut (episodes end in credits, a different problem; a static scene
+    must not be mistaken for a card).
+  - detect_end_card(original, probe(original).video.duration, settings.end_card,
+    has_audio=probe(original).audio is not None). If it finds a card, the proxy is made with
+    end=that time (the song's end if the audio shows one, else the card's first frame),
+    otherwise with end=None, so an AMV without a card keeps the proxy it already had.
+  - A video-only AMV is cut by the video alone (has_audio=False); it must not fail.
 
   Rules
   - No wavs are made, not even for AMVs: proxy_dir holds only .mp4 proxies (+ sidecars).
@@ -60,6 +73,7 @@ SPECIFICATION
   definitions (put quick manual runs under `if __name__ == "__main__":`).
 """
 
+import dataclasses
 from fractions import Fraction
 from pathlib import Path
 
@@ -67,7 +81,7 @@ import pandas as pd
 import pytest
 
 from amv.config import DECODING
-from amv.io.ffmpeg import generate_file_id, probe
+from amv.io.ffmpeg import generate_file_id, probe, video_proxy_path
 from amv.io.videos import build_video_table
 
 pytestmark = pytest.mark.integration  # every test here runs the real ffmpeg
@@ -88,6 +102,7 @@ COLUMNS = {
     "codec",
     "proxy_width",
     "proxy_height",
+    "end_time",
 }
 
 
@@ -370,3 +385,89 @@ def test_second_run_transcodes_nothing_and_gives_the_same_table(dirs, amv, episo
 
     assert {p: p.stat().st_mtime_ns for p in dirs["proxy_dir"].iterdir()} == stamps
     pd.testing.assert_frame_equal(second, first)
+
+
+# --- End cards (task 3.8) ---------------------------------------------------------
+
+
+@pytest.fixture
+def carded_amv(make_amv_with_end_card):
+    """4 s of footage, then a 3 s static card."""
+    return make_amv_with_end_card("amvs/Carded AMV.mp4", footage=4.0, card=3.0)
+
+
+def test_an_amvs_end_card_is_cut_from_the_proxy(dirs, carded_amv):
+    row = row_of(build_video_table(**dirs, settings=DECODING), carded_amv)
+
+    proxy = probe(row["video_proxy_path"], DECODING.probe_timeout).video
+    assert row["end_time"] == pytest.approx(4.0, abs=1 / DECODING.end_card.fps)
+    assert proxy.duration == pytest.approx(row["end_time"], abs=1 / float(proxy.fps))
+
+
+def test_duration_stays_the_originals(dirs, carded_amv):
+    row = row_of(build_video_table(**dirs, settings=DECODING), carded_amv)
+
+    assert row["duration"] == pytest.approx(probe(carded_amv, DECODING.probe_timeout).video.duration)
+    assert row["end_time"] < row["duration"]
+
+
+def test_without_a_card_end_time_is_the_duration_and_the_proxy_is_unchanged(dirs, amv):
+    row = row_of(build_video_table(**dirs, settings=DECODING), amv)
+
+    assert row["end_time"] == row["duration"]
+    assert row["video_proxy_path"] == str(video_proxy_path(amv, dirs["proxy_dir"], DECODING.video_proxy))
+
+
+def test_library_videos_are_never_cut(dirs, make_amv_with_end_card):
+    episode = make_amv_with_end_card("library/Blue Lock/S01E01.mp4", footage=4.0, card=3.0)
+
+    row = row_of(build_video_table(**dirs, settings=DECODING), episode)
+
+    assert row["end_time"] == row["duration"]
+    assert row["video_proxy_path"] == str(video_proxy_path(episode, dirs["proxy_dir"], DECODING.video_proxy))
+
+
+def test_detection_can_be_turned_off(dirs, carded_amv):
+    off = dataclasses.replace(DECODING, end_card=None)
+
+    row = row_of(build_video_table(**dirs, settings=off), carded_amv)
+
+    assert row["end_time"] == row["duration"]
+    assert row["video_proxy_path"] == str(
+        video_proxy_path(carded_amv, dirs["proxy_dir"], DECODING.video_proxy)
+    )
+
+
+def test_end_time_is_float64(dirs, amv, carded_amv):
+    table = build_video_table(**dirs, settings=DECODING)
+
+    assert table["end_time"].dtype == "float64"
+
+
+def test_a_cut_amv_is_not_transcoded_again(dirs, carded_amv):
+    first = build_video_table(**dirs, settings=DECODING)
+    proxy = Path(row_of(first, carded_amv)["video_proxy_path"])
+    stamp = proxy.stat().st_mtime_ns
+
+    second = build_video_table(**dirs, settings=DECODING)
+
+    assert proxy.stat().st_mtime_ns == stamp
+    pd.testing.assert_frame_equal(second, first)
+
+
+def test_the_cut_moves_back_to_where_the_song_ends(dirs, make_amv_with_end_card):
+    src = make_amv_with_end_card("amvs/Outro AMV.mp4", footage=4.0, card=3.0, song_end=2.5)
+
+    row = row_of(build_video_table(**dirs, settings=DECODING), src)
+
+    proxy = probe(row["video_proxy_path"], DECODING.probe_timeout).video
+    assert row["end_time"] == pytest.approx(2.5, abs=0.1)
+    assert proxy.duration == pytest.approx(row["end_time"], abs=1 / float(proxy.fps))
+
+
+def test_a_video_only_amv_is_cut_by_the_video(dirs, make_amv_with_end_card):
+    src = make_amv_with_end_card("amvs/Silent AMV.mp4", footage=4.0, card=3.0, audio=False)
+
+    row = row_of(build_video_table(**dirs, settings=DECODING), src)
+
+    assert row["end_time"] == pytest.approx(4.0, abs=1 / DECODING.end_card.fps)

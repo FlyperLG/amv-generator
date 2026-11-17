@@ -38,6 +38,17 @@ SPECIFICATION
     cleanup script use it to ask "is this done already?" cheaply.)
     The same function for the video side, video_proxy_path, follows the same rules.
 
+  Cutting the end (task 3.8): an optional keyword `end: float | None = None`
+  - None: the whole source, with exactly the name it had before `end` existed (the settings
+    part is pinned below), so the proxies already on disk stay valid.
+  - A number: the wav stops at `end` seconds of the source.
+  - end is part of the name: another end gives another file and keeps the old one; the
+    same end gives the same file. It is rounded to milliseconds first, so 1.5 and
+    1.5000001 name (and cut) the same file. (Decision: the name follows the CUT, not the
+    detection settings, so retuning detection only re-encodes the AMVs whose cut moved.)
+  - end <= 0 -> ValueError, before ffmpeg runs and before anything is created.
+  - audio_proxy_path(..., end=...) predicts the path for that end.
+
   Skipping and re-doing work
   - An up-to-date wav is returned without re-running ffmpeg (file left untouched).
   - If the source changed since the wav was made, it is rebuilt.
@@ -336,3 +347,65 @@ def test_not_a_media_file_raises_and_leaves_nothing(tmp_path, out_dir):
         make_audio_proxy(fake, out_dir, DECODING.audio_proxy)
 
     assert list(out_dir.iterdir()) == []
+
+
+# --- Cutting the end (task 3.8) -------------------------------------------------
+
+DEFAULT_AUDIO_SETTINGS_ID = "80663d88-e062-536f-a61a-dc520b5ca1d5"  # the pre-3.8 name of DECODING.audio_proxy
+
+
+def test_without_end_the_name_is_unchanged(make_media, out_dir):
+    src = make_media("amv.mp4", video=True, audio=True, duration=1.0)
+
+    path = audio_proxy_path(src, out_dir, DECODING.audio_proxy)
+
+    assert path == audio_proxy_path(src, out_dir, DECODING.audio_proxy, end=None)
+    assert path.stem.split("_")[1] == DEFAULT_AUDIO_SETTINGS_ID
+
+
+def test_end_cuts_the_wav(make_media, out_dir):
+    src = make_media("amv.mp4", video=True, audio=True, duration=3.0)
+
+    wav = make_audio_proxy(src, out_dir, DECODING.audio_proxy, end=1.5)
+
+    rate, _, _, samples = read_wav(wav)
+    assert len(samples) / rate == pytest.approx(1.5, abs=0.01)
+
+
+def test_end_is_part_of_the_name(make_media, out_dir):
+    src = make_media("amv.mp4", video=True, audio=True, duration=3.0)
+    full = make_audio_proxy(src, out_dir, DECODING.audio_proxy)
+
+    cut = make_audio_proxy(src, out_dir, DECODING.audio_proxy, end=1.5)
+
+    assert cut != full
+    assert cut.name.split("_")[0] == full.name.split("_")[0]  # same video_id
+    assert full.is_file()  # the old one is kept
+    assert audio_proxy_path(src, out_dir, DECODING.audio_proxy, end=2.0) != cut
+
+
+def test_end_is_rounded_to_milliseconds(make_media, out_dir):
+    src = make_media("amv.mp4", video=True, audio=True, duration=1.0)
+
+    assert audio_proxy_path(src, out_dir, DECODING.audio_proxy, end=1.5) == audio_proxy_path(
+        src, out_dir, DECODING.audio_proxy, end=1.5000001
+    )
+
+
+def test_path_with_end_matches_make_audio_proxy(make_media, out_dir):
+    src = make_media("amv.mp4", video=True, audio=True, duration=3.0)
+
+    predicted = audio_proxy_path(src, out_dir, DECODING.audio_proxy, end=1.5)
+
+    assert make_audio_proxy(src, out_dir, DECODING.audio_proxy, end=1.5) == predicted
+
+
+@pytest.mark.parametrize("end", [0.0, -1.0])
+def test_end_must_be_positive(make_media, tmp_path, end):
+    src = make_media("amv.mp4", video=True, audio=True, duration=1.0)
+    out_dir = tmp_path / "not_created"
+
+    with pytest.raises(ValueError):
+        make_audio_proxy(src, out_dir, DECODING.audio_proxy, end=end)
+
+    assert not out_dir.exists()

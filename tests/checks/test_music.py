@@ -50,7 +50,9 @@ Panels and plot_song
   - draw_sections: one band per run of equal labels, from the run's first beat to the next
     run's start; the last ends at the last t + ibi.
   - draw_beat_ticks: two line collections, beats and downbeats, spanning the panel height.
-  - plot_novelty labels every candidate peak in the window with its prominence.
+  - plot_novelty labels every candidate peak in the window with its prominence, and hatches
+    the first and last edge_bars bars (MUSIC.edge_bars, task 3.9 item 2: the zones where
+    find_section_boundaries drops every peak; min_section_bars only spaces the peaks).
   - plot_song: a Figure (not pyplot) with 5 panels sharing x; x from 0 to the song end, or
     the window, with an open end clipped to the song end; the title; a section legend with
     only the labels the song has. It renders without error.
@@ -146,7 +148,9 @@ def test_recompute_sections_matches_find_section_boundaries(kick_loop):
     assert isinstance(check, SectionCheck)
     np.testing.assert_array_equal(check.bar_times, beat_times[::4])
     assert check.novelty.shape == (16,)
-    expected = find_section_boundaries(check.novelty, MUSIC.min_section_bars, MUSIC.novelty_prominence)
+    expected = find_section_boundaries(
+        check.novelty, MUSIC.min_section_bars, MUSIC.edge_bars, MUSIC.novelty_prominence
+    )
     np.testing.assert_array_equal(check.boundaries, expected)
     assert check.prominences.shape == check.peaks.shape
     assert set(check.boundaries[1:]) <= set(check.peaks)
@@ -365,8 +369,26 @@ def test_plot_novelty_labels_every_peak_in_the_window():
         prominences=np.array([0.3, 0.1, 0.5, 0.2]),
     )
     ax = _ax()
-    plot_novelty(ax, check, prominence=0.1, min_section_bars=2, window=(2.0, 7.0))
+    plot_novelty(ax, check, prominence=0.1, edge_bars=2, window=(2.0, 7.0))
     assert sorted(t.get_text() for t in ax.texts) == ["0.10", "0.50"]
+
+
+def test_plot_novelty_hatches_the_first_and_last_edge_bars():
+    """20 bars at 0, 1, ..., 19 s; edge_bars = 3: hatched from bar 0 to bar 3 and from bar 17 to bar 19."""
+    check = SectionCheck(
+        bar_times=np.arange(20.0),
+        novelty=np.zeros(20),
+        boundaries=np.array([0]),
+        peaks=np.array([], dtype=int),
+        prominences=np.array([]),
+    )
+    ax = _ax()
+    plot_novelty(ax, check, prominence=0.1, edge_bars=3, window=None)
+
+    hatched = sorted(
+        (round(p.get_x(), 6), round(p.get_x() + p.get_width(), 6)) for p in ax.patches if p.get_hatch() == "//"
+    )
+    assert hatched == [(0.0, 3.0), (17.0, 19.0)]
 
 
 # --- plot_song --------------------------------------------------------------------
@@ -389,7 +411,7 @@ def _plot(song, window):
         envelope=envelope,
         check=check,
         prominence=MUSIC.novelty_prominence,
-        min_section_bars=MUSIC.min_section_bars,
+        edge_bars=MUSIC.edge_bars,
         window=window,
         fig_width=8,
         panel_height=1.5,

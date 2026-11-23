@@ -86,7 +86,10 @@ def recompute_sections(
     bars = pool_to_beats(dense=timbre, beat_times=bar_times)
     novelty = section_novelty(bar_features=bars, kernel_bars=settings.section_kernel_bars)
     boundaries = find_section_boundaries(
-        novelty=novelty, min_section_bars=settings.min_section_bars, prominence=settings.novelty_prominence
+        novelty=novelty,
+        min_section_bars=settings.min_section_bars,
+        edge_bars=settings.edge_bars,
+        prominence=settings.novelty_prominence,
     )
     peaks, _ = find_peaks(novelty)
     prominences = peak_prominences(x=novelty, peaks=peaks)[0]
@@ -411,24 +414,24 @@ def plot_novelty(
     ax: Axes,
     check: SectionCheck,
     prominence: float,
-    min_section_bars: int,
+    edge_bars: int,
     window: tuple[float, float] | None,
 ) -> None:
     """Draw the section novelty and why each peak was or wasn't chosen as a boundary.
 
     Every candidate peak in the window gets a bar from its contour line up to the peak (its
     prominence) and a label with the value: chosen ones in colour with a marker, rejected
-    ones in grey. The first and last min_section_bars bars are hatched, since peaks there
+    ones in grey. The first and last edge_bars bars are hatched, since peaks there
     are always dropped. The threshold is a prominence, not a height, so it is in the legend,
     not a line. Reading it: a grey peak with a short bar was too weak, one in the hatched
     zone too close to an end, one with a long bar lost to a taller peak less than
-    min_section_bars away.
+    MUSIC.min_section_bars away.
 
     Args:
         ax (Axes): The panel to draw into.
         check (SectionCheck): From recompute_sections.
         prominence (float): MUSIC.novelty_prominence, for the legend.
-        min_section_bars (int): MUSIC.min_section_bars, for the hatched zones.
+        edge_bars (int): MUSIC.edge_bars, for the hatched zones.
         window (tuple[float, float] | None): The plot window in seconds, or None."""
     x = check.bar_times
     nov = check.novelty
@@ -459,9 +462,9 @@ def plot_novelty(
         )
 
     n = len(x)
-    if n > 2 * min_section_bars:
-        ax.axvspan(x[0], x[min_section_bars], fill=False, hatch="//", edgecolor="0.7", lw=0)
-        ax.axvspan(x[n - min_section_bars], x[-1], fill=False, hatch="//", edgecolor="0.7", lw=0)
+    if n > 2 * edge_bars:
+        ax.axvspan(x[0], x[edge_bars], fill=False, hatch="//", edgecolor="0.7", lw=0)
+        ax.axvspan(x[n - edge_bars], x[-1], fill=False, hatch="//", edgecolor="0.7", lw=0)
 
     ax.plot([], [], " ", label=f"prominence ≥ {prominence:.2f}")
     ax.margins(y=0.15)
@@ -475,7 +478,7 @@ def plot_song(
     envelope: tuple[np.ndarray, np.ndarray, np.ndarray],
     check: SectionCheck,
     prominence: float,
-    min_section_bars: int,
+    edge_bars: int,
     window: tuple[float, float] | None,
     fig_width: float,
     panel_height: float,
@@ -493,7 +496,7 @@ def plot_song(
         envelope (tuple[np.ndarray, np.ndarray, np.ndarray]): From waveform_envelope.
         check (SectionCheck): From recompute_sections.
         prominence (float): MUSIC.novelty_prominence.
-        min_section_bars (int): MUSIC.min_section_bars.
+        edge_bars (int): MUSIC.edge_bars, for the hatched zones of the novelty panel.
         window (tuple[float, float] | None): The plot window in seconds, or None.
         fig_width (float): Inches.
         panel_height (float): Inches per panel.
@@ -508,7 +511,7 @@ def plot_song(
     plot_onset(axes[1], analysis.dense, window)
     plot_rms(axes[2], analysis.dense, analysis.beats, window)
     plot_dynamics(axes[3], analysis.beats, window)
-    plot_novelty(axes[4], check, prominence, min_section_bars, window)
+    plot_novelty(axes[4], check, prominence, edge_bars, window)
 
     for ax in axes:
         draw_sections(ax, analysis.beats)

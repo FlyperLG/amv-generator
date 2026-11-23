@@ -111,7 +111,7 @@ def plot_one(song_row: pd.Series, args: Args, window: tuple[float, float] | None
         envelope=envelope,
         check=check,
         prominence=MUSIC.novelty_prominence,
-        min_section_bars=MUSIC.min_section_bars,
+        edge_bars=MUSIC.edge_bars,
         window=window,
         fig_width=PLOT_MUSIC.fig_width,
         panel_height=PLOT_MUSIC.panel_height,

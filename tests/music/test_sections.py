@@ -9,16 +9,20 @@ integration test runs the whole chain on the Blue Lock song.
 SPECIFICATION
   Settings are required arguments (Decision: sections.py does not read amv.config; the entry
   point reads the values from config and passes them in).
-  (config: MUSIC.section_kernel_bars = 8, MUSIC.min_section_bars = 4, MUSIC.novelty_prominence = 0.1,
-           MUSIC.drop_level = 0.75, MUSIC.build_rise = 0.5)
+  (config: MUSIC.section_kernel_bars = 8, MUSIC.min_section_bars = 4, MUSIC.edge_bars = 2,
+           MUSIC.novelty_prominence = 0.1, MUSIC.level_percentile = 10, MUSIC.drop_level = 0.7,
+           MUSIC.build_rise = 0.5)
+  (drop_level 0.7: picked in task 3.9 by a sweep on the 33-song library with the percentile
+  level scale; median drop share 0.47, range 0.27-0.70, Blue Lock and Heroes unchanged.)
   SECTION_LABELS = ("intro", "build", "drop", "break", "outro") is a fixed vocabulary, not config.
 
   The chain (the caller does the pooling, with functions that already exist):
       timbre  = compute_timbre_features(y, ...)                       [T, D] raw
       bars    = pool_to_beats(timbre, grid.times[grid.is_downbeat])   [n_bars, D]  bar k = bar_idx k
       novelty = section_novelty(bars, kernel_bars)                    [n_bars]
-      bounds  = find_section_boundaries(novelty, min_section_bars, prominence)
-      labels  = label_sections(grid, dyn["rms_s"], dyn["rms_d1"], bounds, drop_level, build_rise)
+      bounds  = find_section_boundaries(novelty, min_section_bars, edge_bars, prominence)
+      labels  = label_sections(grid, dyn["rms_s"], dyn["rms_d1"], bounds,
+                               level_percentile, drop_level, build_rise)
   Boundaries are bar indices, so they are snapped to downbeats by construction.
   (Decision, task 3.7: the novelty is public and computed once, so the diagnostic plot can draw
   the same curve the boundaries were picked from. It is not cached; the plot recomputes it.)
@@ -58,16 +62,20 @@ SPECIFICATION
     with no real sections still gets novelty peaks at its biggest wobbles. Real songs have
     sections, and imperfect labels are acceptable here (step 13 lets the user fix them).
 
-  find_section_boundaries(novelty, min_section_bars, prominence) -> np.ndarray
+  find_section_boundaries(novelty, min_section_bars, edge_bars, prominence) -> np.ndarray
   - Sorted int bar indices where a section starts. Always starts with 0. n_bars = len(novelty).
   - The other boundaries are the peaks found by
     scipy.signal.find_peaks(novelty, prominence=prominence, distance=min_section_bars),
-    minus any peak closer than min_section_bars to the start or the end
-    (min_section_bars <= peak <= n_bars - min_section_bars). So no section is shorter than
-    min_section_bars bars.
+    minus any peak closer than edge_bars to the start or the end
+    (edge_bars <= peak <= n_bars - edge_bars). So the sections between two boundaries are at
+    least min_section_bars long, and the first and the last at least edge_bars.
+  - (Decision, task 3.9 item 2: the edge rule gets its own, smaller setting. With
+    min_section_bars = 4 at the edges, 14 of 33 songs lost a real peak 2-4 bars from an end,
+    up to prominence 0.40. edge_bars > min_section_bars is allowed: it only drops more peaks.)
   - Fewer than 2 bars: [0]. Input not modified.
 
-  label_sections(grid, rms_s, rms_d1, boundaries, drop_level, build_rise) -> np.ndarray [B]
+  label_sections(grid, rms_s, rms_d1, boundaries, level_percentile, drop_level, build_rise)
+      -> np.ndarray [B]
   - One label per beat, every one in SECTION_LABELS.
   - Segment s is the bars boundaries[s] <= bar_idx < boundaries[s + 1]; the last one runs to
     the end. Pickup beats (bar_idx -1) belong to segment 0. Boundaries past the last bar
@@ -75,12 +83,24 @@ SPECIFICATION
   - Per segment: energy = the mean of rms_s over its beats, rise = the SUM of rms_d1 over
     its beats (about how much rms_s gained across the segment, in rms_s units, which are
     already the song's IQR units).
+  - The level scale comes from the BEATS, not the segments:
+    energy_lo, energy_hi = np.percentile(rms_s, [level_percentile, 100 - level_percentile])
+    over all beats (pickup included, default linear interpolation), passed to _segment_labels.
+  - (Decision, task 3.9 item 1: min-max over the segments hinges on the single quietest
+    segment. In 6 of 33 songs one quiet intro, break or outro lifted every other segment over
+    drop_level, so up to 94% of a song was "drop". A quiet stretch under level_percentile % of
+    the beats doesn't move the beat percentile.)
+  - level_percentile must be in [0, 50): ValueError otherwise (at 50 the scale has no width).
+    0 is allowed: the min and max beat, not the min and max segment.
   - rms_s and rms_d1 must have one value per beat: ValueError otherwise. Inputs not modified.
 
-  _segment_labels(energy, rise, drop_level, build_rise) -> list[str], one per segment
-  - level = (energy - min) / (max - min) over the song's segments, 0 for all if they are
-    equal (Decision: rank segments within the song. Measured on the 7 AMV songs, "0.5 IQR
-    above the median" almost never fires, because in a loud song the drops ARE the median.)
+  _segment_labels(energy, rise, energy_lo, energy_hi, drop_level, build_rise)
+      -> list[str], one per segment
+  - level = (energy - energy_lo) / (energy_hi - energy_lo), 0 for every segment if
+    energy_hi == energy_lo (Decision: a song that is flat at both percentiles has no drop).
+    Levels can be below 0 or above 1; only the comparison with drop_level matters.
+    (Decision: rank segments within the song. "0.5 IQR above the median" almost never fires,
+    because in a loud song the drops ARE the median.)
   - Rules, first match wins:
       1. level >= drop_level                                   -> "drop"
       2. rise >= build_rise and the NEXT segment is a drop     -> "build"
@@ -109,15 +129,32 @@ from amv.music.sections import (
 
 K = 8
 MIN_BARS = 4
+EDGE_BARS = 2
 PROMINENCE = 0.1
-DROP_LEVEL = 0.75
+PERCENTILE = 10
+DROP_LEVEL = 0.7
 BUILD_RISE = 0.5
 BEATS_PER_BAR = 4
 
 
-def boundaries(bar_features, kernel_bars=K, min_section_bars=MIN_BARS, prominence=PROMINENCE):
+def boundaries(bar_features, kernel_bars=K, min_section_bars=MIN_BARS, edge_bars=EDGE_BARS, prominence=PROMINENCE):
     """The whole chain from bar features to boundaries."""
-    return find_section_boundaries(section_novelty(bar_features, kernel_bars), min_section_bars, prominence)
+    return find_section_boundaries(section_novelty(bar_features, kernel_bars), min_section_bars, edge_bars, prominence)
+
+
+def bounds_of(novelty, min_section_bars=MIN_BARS, edge_bars=EDGE_BARS, prominence=PROMINENCE):
+    """find_section_boundaries with the test defaults."""
+    return find_section_boundaries(novelty, min_section_bars, edge_bars, prominence)
+
+
+def label(grid, rms_s, rms_d1, starts, percentile=PERCENTILE, drop_level=DROP_LEVEL, build_rise=BUILD_RISE):
+    """label_sections with the test defaults."""
+    return label_sections(grid, rms_s, rms_d1, starts, percentile, drop_level, build_rise)
+
+
+def seg_labels(energy, rise, lo=0.0, hi=1.0, drop_level=DROP_LEVEL, build_rise=BUILD_RISE):
+    """_segment_labels on lists, with the level scale [lo, hi] (default: energy is the level)."""
+    return _segment_labels(np.array(energy, float), np.array(rise, float), lo, hi, drop_level, build_rise)
 
 
 def spikes(n_bars, **peaks):
@@ -161,7 +198,9 @@ def per_bar(grid, values_per_bar):
     return np.asarray(values_per_bar, dtype=np.float64)[np.maximum(grid.bar_idx, 0)]
 
 
-def labels_for(segment_bars, energy, rise=None, drop_level=DROP_LEVEL, build_rise=BUILD_RISE, pickup=0):
+def labels_for(
+    segment_bars, energy, rise=None, percentile=PERCENTILE, drop_level=DROP_LEVEL, build_rise=BUILD_RISE, pickup=0
+):
     """Label a grid whose segments are segment_bars bars long, with a flat rms_s per segment and
     rms_d1 spread evenly so each segment's sum is its rise. Returns (grid, labels)."""
     grid = make_grid(sum(segment_bars), pickup)
@@ -171,7 +210,7 @@ def labels_for(segment_bars, energy, rise=None, drop_level=DROP_LEVEL, build_ris
     rise = np.zeros(len(segment_bars)) if rise is None else np.asarray(rise, dtype=np.float64)
     seg = seg_of_bar[np.maximum(grid.bar_idx, 0)]
     rms_d1 = rise[seg] / np.bincount(seg)[seg]
-    return grid, label_sections(grid, rms_s, rms_d1, starts, drop_level, build_rise)
+    return grid, label(grid, rms_s, rms_d1, starts, percentile, drop_level, build_rise)
 
 
 def segment_of_each_beat_labels(grid, labels, starts):
@@ -370,43 +409,66 @@ def test_section_novelty_does_not_modify_the_input():
 def test_boundaries_are_the_prominent_peaks():
     novelty = spikes(24, b8=0.5, b14=0.05, b18=0.3)
 
-    np.testing.assert_array_equal(find_section_boundaries(novelty, MIN_BARS, 0.1), [0, 8, 18])
+    np.testing.assert_array_equal(bounds_of(novelty, prominence=0.1), [0, 8, 18])
 
 
 def test_boundaries_use_prominence_as_given():
     novelty = spikes(24, b8=0.5, b18=0.3)
 
-    np.testing.assert_array_equal(find_section_boundaries(novelty, MIN_BARS, 0.4), [0, 8])
+    np.testing.assert_array_equal(bounds_of(novelty, prominence=0.4), [0, 8])
 
 
-def test_peaks_closer_than_min_section_bars_to_either_end_are_dropped():
-    """Bar 3 is too close to the start, bar 21 to the end (24 - 4 = 20 is the last allowed)."""
+def test_peaks_closer_than_edge_bars_to_either_end_are_dropped():
+    """Bar 1 is too close to the start, bar 23 to the end (24 - 2 = 22 is the last allowed)."""
+    novelty = spikes(24, b1=1.0, b10=0.5, b23=1.0)
+
+    np.testing.assert_array_equal(bounds_of(novelty), [0, 10])
+
+
+def test_peaks_between_edge_bars_and_min_section_bars_from_an_end_are_kept():
+    """Task 3.9 item 2: bars 3 and 21 are inside the old 4-bar edge zone but outside the 2-bar one."""
     novelty = spikes(24, b3=1.0, b10=0.5, b21=1.0)
 
-    found = find_section_boundaries(novelty, MIN_BARS, PROMINENCE)
-
-    assert 3 not in found and 21 not in found
-    assert found[0] == 0 and 10 in found
+    np.testing.assert_array_equal(bounds_of(novelty), [0, 3, 10, 21])
 
 
-def test_a_peak_exactly_min_section_bars_from_the_end_is_kept():
-    np.testing.assert_array_equal(find_section_boundaries(spikes(24, b20=0.5), MIN_BARS, PROMINENCE), [0, 20])
+@pytest.mark.parametrize(("peak", "kept"), [(2, True), (22, True), (1, False), (23, False)])
+def test_a_peak_exactly_edge_bars_from_an_end_is_kept(peak, kept):
+    found = bounds_of(spikes(24, **{f"b{peak}": 0.5}))
+
+    assert (peak in found) == kept
+
+
+def test_edge_bars_is_used_as_given():
+    """The same curve with the old 4-bar edge zone: bars 3 and 21 are dropped again."""
+    novelty = spikes(24, b3=1.0, b10=0.5, b21=1.0)
+
+    np.testing.assert_array_equal(bounds_of(novelty, edge_bars=4), [0, 10])
+
+
+def test_edge_bars_larger_than_min_section_bars_is_allowed():
+    novelty = spikes(24, b5=1.0, b12=0.5, b19=1.0)
+
+    np.testing.assert_array_equal(bounds_of(novelty, edge_bars=6), [0, 12])
 
 
 def test_close_peaks_keep_only_the_higher_one():
-    np.testing.assert_array_equal(
-        find_section_boundaries(spikes(24, b10=0.5, b12=0.9), MIN_BARS, PROMINENCE), [0, 12]
-    )
+    np.testing.assert_array_equal(bounds_of(spikes(24, b10=0.5, b12=0.9)), [0, 12])
+
+
+def test_min_section_bars_still_spaces_peaks_near_an_end():
+    """Bars 2 and 4 are both outside the edge zone but only 2 apart: the higher one wins."""
+    np.testing.assert_array_equal(bounds_of(spikes(24, b2=0.5, b4=0.9, b12=0.5)), [0, 4, 12])
 
 
 def test_a_flat_novelty_gives_only_boundary_zero():
-    np.testing.assert_array_equal(find_section_boundaries(np.zeros(24), MIN_BARS, PROMINENCE), [0])
+    np.testing.assert_array_equal(bounds_of(np.zeros(24)), [0])
 
 
 @pytest.mark.parametrize("n_bars", [0, 1])
 def test_boundaries_of_fewer_than_two_bars_are_only_zero(n_bars):
     """A 1-D [0], not a 0-d array: assert_array_equal would broadcast 0 against [0]."""
-    found = find_section_boundaries(np.zeros(n_bars), MIN_BARS, PROMINENCE)
+    found = bounds_of(np.zeros(n_bars))
 
     assert found.shape == (1,)
     assert found[0] == 0
@@ -416,7 +478,7 @@ def test_boundaries_do_not_modify_the_novelty():
     novelty = spikes(24, b8=0.5, b18=0.3)
     original = novelty.copy()
 
-    find_section_boundaries(novelty, MIN_BARS, PROMINENCE)
+    bounds_of(novelty)
 
     np.testing.assert_array_equal(novelty, original)
 
@@ -445,9 +507,10 @@ def test_no_section_is_shorter_than_min_section_bars():
     assert len(found) >= 3
 
 
-def test_no_boundary_close_to_the_end():
-    """A 2-bar tail can't be its own section."""
-    np.testing.assert_array_equal(boundaries(blocks(16, 2)), [0])
+def test_a_short_tail_is_a_section_only_from_edge_bars_on():
+    """A 2-bar tail is its own section with edge_bars = 2, but not with 3."""
+    np.testing.assert_array_equal(boundaries(blocks(16, 2)), [0, 16])
+    np.testing.assert_array_equal(boundaries(blocks(16, 2), edge_bars=3), [0])
 
 
 def test_min_section_bars_is_used_as_given():
@@ -481,7 +544,7 @@ def test_a_one_bar_song_can_be_labelled():
     grid = make_grid(1)
     found = boundaries(np.ones((1, 24)))
 
-    labels = label_sections(grid, np.zeros(4), np.zeros(4), found, DROP_LEVEL, BUILD_RISE)
+    labels = label(grid, np.zeros(4), np.zeros(4), found)
 
     assert labels.tolist() == ["intro"] * 4
 
@@ -506,25 +569,50 @@ def test_a_one_bar_song_can_be_labelled():
         ([0, 1, 0], [0, 0, 5], ["intro", "drop", "outro"]),
         # loud wins over rising, and a loud first or last segment is a drop
         ([1, 0, 1], [5, 5, 5], ["drop", "build", "drop"]),
-        # level is relative to the song's own range: only the shift and spread matter
-        ([10, 30, 10], [0, 0, 0], ["intro", "drop", "outro"]),
-        ([0.0, 0.8, 0.7, 1.0], [0, 0, 0, 0], ["intro", "drop", "break", "drop"]),
-        # one segment, or all the same: no drop
-        ([3], [0], ["intro"]),
-        ([2, 2, 2], [0, 0, 0], ["intro", "break", "outro"]),
+        ([0.0, 0.8, 0.6, 1.0], [0, 0, 0, 0], ["intro", "drop", "break", "drop"]),
+        # levels outside [0, 1] are fine: only the comparison with drop_level matters
+        ([-3, 0.5, 2], [0, 0, 0], ["intro", "break", "drop"]),
+        # one quiet segment, or all equally quiet
+        ([0.3], [0], ["intro"]),
+        ([0.5, 0.5, 0.5], [0, 0, 0], ["intro", "break", "outro"]),
     ],
 )
 def test_segment_rules(energy, rise, expected):
-    assert _segment_labels(np.array(energy, float), np.array(rise, float), DROP_LEVEL, BUILD_RISE) == expected
+    """With the scale [0, 1], the energy is the level."""
+    assert seg_labels(energy, rise) == expected
+
+
+@pytest.mark.parametrize(
+    ("energy", "lo", "hi", "expected"),
+    [
+        # level = (energy - lo) / (hi - lo): 0.0, 1.0, 0.0
+        ([10, 30, 10], 10, 30, ["intro", "drop", "outro"]),
+        # the scale is given, not the segments' own range: 0.25, 0.5, 0.25
+        ([10, 20, 10], 0, 40, ["intro", "break", "outro"]),
+        # a segment below lo or above hi
+        ([-5, 0, 2], 0, 1, ["intro", "break", "drop"]),
+    ],
+)
+def test_level_uses_the_given_scale(energy, lo, hi, expected):
+    assert seg_labels(energy, [0] * len(energy), lo, hi) == expected
+
+
+def test_a_scale_of_zero_width_gives_no_drop():
+    """energy_hi == energy_lo: every level is 0, even if the segments differ. No warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        labels = seg_labels([0, 0, 5], [0, 0, 0], lo=0.0, hi=0.0)
+
+    assert labels == ["intro", "break", "outro"]
 
 
 def test_drop_level_and_build_rise_are_used_as_given():
-    energy = np.array([0.0, 0.8, 1.0])
-    rise = np.array([0.0, 0.6, 0.0])
+    energy = [0.0, 0.8, 1.0]
+    rise = [0.0, 0.6, 0.0]
 
-    assert _segment_labels(energy, rise, 0.75, 0.5) == ["intro", "drop", "drop"]
-    assert _segment_labels(energy, rise, 0.9, 0.5) == ["intro", "build", "drop"]
-    assert _segment_labels(energy, rise, 0.9, 0.7) == ["intro", "break", "drop"]
+    assert seg_labels(energy, rise, drop_level=0.75, build_rise=0.5) == ["intro", "drop", "drop"]
+    assert seg_labels(energy, rise, drop_level=0.9, build_rise=0.5) == ["intro", "build", "drop"]
+    assert seg_labels(energy, rise, drop_level=0.9, build_rise=0.7) == ["intro", "break", "drop"]
 
 
 # =================================================================================
@@ -562,12 +650,76 @@ def test_pickup_beats_join_the_first_segment():
 
 
 def test_energy_is_the_mean_of_rms_s_over_the_segment():
-    """Segment 1 is quiet for half its beats and very loud for the other half: its mean is the highest."""
+    """Segment 1 is quiet for half its beats and very loud for the other half: mean 1.5, level
+    0.5 on the beat scale [0, 3]; segment 2 has mean 1, level 0.33. drop_level 0.45 lies between."""
     grid = make_grid(12)
     rms_s = per_bar(grid, [0, 0, 0, 0, 0, 0, 3, 3, 1, 1, 1, 1])
-    labels = label_sections(grid, rms_s, np.zeros_like(rms_s), np.array([0, 4, 8]), DROP_LEVEL, BUILD_RISE)
+    labels = label(grid, rms_s, np.zeros_like(rms_s), np.array([0, 4, 8]), drop_level=0.45)
 
     assert segment_of_each_beat_labels(grid, labels, np.array([0, 4, 8])) == ["intro", "drop", "outro"]
+
+
+# --- the level scale from the beat percentiles (task 3.9 item 1) ---------------------
+
+
+def test_one_quiet_segment_does_not_make_everything_a_drop():
+    """The RAJA / Can't Hold Us pattern: a short near-silent intro (8 of 136 beats, under 10 %)
+    and four segments around 0, the loudest at 1. Beat q10 = 0, q90 = 1, so only the loudest
+    segment is a drop. Min-max over the segments would put all four at >= 0.83."""
+    grid, labels = labels_for([2, 8, 8, 8, 8], [-5, 0, 0.2, 1, 0.1])
+
+    starts = np.array([0, 2, 10, 18, 26])
+    assert segment_of_each_beat_labels(grid, labels, starts) == ["intro", "break", "break", "drop", "outro"]
+
+
+def test_the_percentiles_are_over_beats_not_segments():
+    """Same song: percentiles over the 5 segment energies would give q10 = -3, q90 = 0.68, and
+    every segment from 0 up would be a drop. Over the beats, the long segments carry the weight."""
+    grid, labels = labels_for([2, 8, 8, 8, 8], [-5, 0, 0.2, 1, 0.1])
+
+    assert np.mean(labels == "drop") == pytest.approx(32 / 136)
+
+
+def test_level_percentile_is_used_as_given():
+    """Percentile 0: the scale is the quietest and loudest beat, [-5, 1], so the quiet intro
+    sets the floor again and the segments at 0, 0.2 and 0.1 reach >= 0.83."""
+    grid, labels = labels_for([2, 8, 8, 8, 8], [-5, 0, 0.2, 1, 0.1], percentile=0)
+
+    starts = np.array([0, 2, 10, 18, 26])
+    assert segment_of_each_beat_labels(grid, labels, starts) == ["intro", "drop", "drop", "drop", "drop"]
+
+
+def test_the_scale_comes_from_np_percentile_of_the_beat_rms_s():
+    """Random rms_s: the labels equal _segment_labels on the scale np.percentile gives."""
+    rng = np.random.default_rng(3)
+    grid = make_grid(20, pickup=2)
+    rms_s = rng.standard_normal(len(grid.times))
+    rms_d1 = rng.standard_normal(len(grid.times))
+    starts = np.array([0, 4, 9, 15])
+    lo, hi = np.percentile(rms_s, [PERCENTILE, 100 - PERCENTILE])
+
+    seg = np.searchsorted(starts, np.maximum(grid.bar_idx, 0), side="right") - 1
+    energy = np.bincount(seg, weights=rms_s) / np.bincount(seg)
+    rise = np.bincount(seg, weights=rms_d1)
+    expected = np.array(_segment_labels(energy, rise, lo, hi, DROP_LEVEL, BUILD_RISE))[seg]
+
+    np.testing.assert_array_equal(label(grid, rms_s, rms_d1, starts), expected)
+
+
+def test_a_song_flat_at_both_percentiles_has_no_drop():
+    """84 beats, only 4 louder (under 10 %): q10 = q90 = 0, so the scale has no width."""
+    grid, labels = labels_for([10, 1, 10], [0, 1, 0])
+
+    assert "drop" not in set(labels.tolist())
+
+
+@pytest.mark.parametrize("percentile", [-1, 50, 60])
+def test_level_percentile_outside_0_to_50_is_rejected(percentile):
+    grid = make_grid(8)
+    rms_s = per_bar(grid, [0] * 4 + [1] * 4)
+
+    with pytest.raises(ValueError):
+        label(grid, rms_s, np.zeros_like(rms_s), np.array([0, 4]), percentile=percentile)
 
 
 def test_rise_is_the_sum_of_rms_d1_over_the_segment():
@@ -577,7 +729,7 @@ def test_rise_is_the_sum_of_rms_d1_over_the_segment():
         grid = make_grid(12)
         rms_s = per_bar(grid, [0] * 4 + [0.1] * 4 + [1] * 4)
         rms_d1 = np.where(grid.bar_idx // 4 == 1, per_beat, 0.0)
-        labels = label_sections(grid, rms_s, rms_d1, starts, DROP_LEVEL, BUILD_RISE)
+        labels = label(grid, rms_s, rms_d1, starts)
 
         assert segment_of_each_beat_labels(grid, labels, starts) == ["intro", middle, "drop"]
 
@@ -585,9 +737,7 @@ def test_rise_is_the_sum_of_rms_d1_over_the_segment():
 def test_boundaries_past_the_last_bar_are_ignored():
     grid = make_grid(12)
     rms_s = per_bar(grid, [0] * 4 + [1] * 4 + [0] * 4)
-    labels = label_sections(
-        grid, rms_s, np.zeros_like(rms_s), np.array([0, 4, 8, 40]), DROP_LEVEL, BUILD_RISE
-    )
+    labels = label(grid, rms_s, np.zeros_like(rms_s), np.array([0, 4, 8, 40]))
 
     assert segment_of_each_beat_labels(grid, labels, np.array([0, 4, 8])) == ["intro", "drop", "outro"]
 
@@ -605,7 +755,7 @@ def test_curves_must_have_one_value_per_beat(which):
     curves[which] = curves[which][:-1]
 
     with pytest.raises(ValueError):
-        label_sections(grid, curves["rms_s"], curves["rms_d1"], np.array([0, 4]), DROP_LEVEL, BUILD_RISE)
+        label(grid, curves["rms_s"], curves["rms_d1"], np.array([0, 4]))
 
 
 def test_labels_do_not_modify_the_inputs():
@@ -615,7 +765,7 @@ def test_labels_do_not_modify_the_inputs():
     bounds = np.array([0, 4, 8])
     copies = [a.copy() for a in (rms_s, rms_d1, bounds, grid.times, grid.bar_idx)]
 
-    label_sections(grid, rms_s, rms_d1, bounds, DROP_LEVEL, BUILD_RISE)
+    label(grid, rms_s, rms_d1, bounds)
 
     for after, before in zip((rms_s, rms_d1, bounds, grid.times, grid.bar_idx), copies, strict=True):
         np.testing.assert_array_equal(after, before)
@@ -638,7 +788,7 @@ def test_sections_are_fast_on_a_song_sized_input():
     for _ in range(3):
         start = time.perf_counter()
         found = boundaries(bars)
-        label_sections(grid, rms_s, rms_d1, found, DROP_LEVEL, BUILD_RISE)
+        label(grid, rms_s, rms_d1, found)
         best = min(best, time.perf_counter() - start)
 
     assert best < 0.02, f"{best * 1000:.1f} ms"
@@ -649,7 +799,9 @@ def test_config_has_the_planned_settings():
 
     assert config.MUSIC.section_kernel_bars == K
     assert config.MUSIC.min_section_bars == MIN_BARS
+    assert config.MUSIC.edge_bars == EDGE_BARS
     assert config.MUSIC.novelty_prominence == PROMINENCE
+    assert config.MUSIC.level_percentile == PERCENTILE
     assert config.MUSIC.drop_level == DROP_LEVEL
     assert config.MUSIC.build_rise == BUILD_RISE
 
@@ -688,11 +840,16 @@ def test_bluelock_sections_are_plausible(beat_model, bluelock_wav):
 
     bars = pool_to_beats(timbre, grid.times[grid.is_downbeat])
     novelty = section_novelty(bars, c.MUSIC.section_kernel_bars)
-    found = find_section_boundaries(novelty, c.MUSIC.min_section_bars, c.MUSIC.novelty_prominence)
-    labels = label_sections(grid, dyn["rms_s"], dyn["rms_d1"], found, c.MUSIC.drop_level, c.MUSIC.build_rise)
+    found = find_section_boundaries(
+        novelty, c.MUSIC.min_section_bars, c.MUSIC.edge_bars, c.MUSIC.novelty_prominence
+    )
+    labels = label_sections(
+        grid, dyn["rms_s"], dyn["rms_d1"], found, c.MUSIC.level_percentile, c.MUSIC.drop_level, c.MUSIC.build_rise
+    )
 
     assert 4 <= len(found) <= 12
-    assert (np.diff(found) >= c.MUSIC.min_section_bars).all()
+    assert (np.diff(found[1:]) >= c.MUSIC.min_section_bars).all()
+    assert found[1] >= c.MUSIC.edge_bars
     assert labels.shape == grid.times.shape
     breakdown = (grid.times > 58) & (grid.times < 74)
     assert np.mean(labels[breakdown] == "drop") < 0.2

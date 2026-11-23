@@ -23,6 +23,8 @@ SPECIFICATION
       sg_polyorder, dense_sg_window_beats, beat_sg_window, n_mfcc,
       section_kernel_bars, min_section_bars, novelty_prominence, drop_level, build_rise
                               (was the constant of the same name in upper case)
+      edge_bars (after min_section_bars), level_percentile (before drop_level)
+                              (new in task 3.9; see tests/music/test_sections.py)
   - settings_id (property) -> str: the same for equal settings, different if any field
     differs, the same in every Python process (so NOT hash(), which is randomised per
     process for strings), and safe in a file name (only [0-9a-z-]). Like the settings uuid
@@ -151,7 +153,9 @@ SETTING_FIELDS = [
     "n_mfcc",
     "section_kernel_bars",
     "min_section_bars",
+    "edge_bars",
     "novelty_prominence",
+    "level_percentile",
     "drop_level",
     "build_rise",
 ]

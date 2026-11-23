@@ -9,18 +9,23 @@ SECTION_LABELS = ("intro", "build", "drop", "break", "outro")  # fixed vocabular
 def find_section_boundaries(
     novelty: np.ndarray,
     min_section_bars: int,
+    edge_bars: int,
     prominence: float,
 ) -> np.ndarray:
     """Pick the section starts: the novelty peaks that stand out by at least prominence.
 
     Peaks are at least min_section_bars apart (the higher one wins), and peaks closer than
-    min_section_bars to either end are dropped, so no section is shorter than
-    min_section_bars, the first and last included.
+    edge_bars to either end are dropped (edge_bars <= peak <= n_bars - edge_bars). So a
+    section between two boundaries is at least min_section_bars long, and the first and
+    last are at least edge_bars long. The edge zone is smaller than the spacing because
+    real intros and outros are often only 2-3 bars.
 
     Args:
         novelty (np.ndarray): The novelty per bar from section_novelty, shape [n_bars].
             Not modified.
-        min_section_bars (int): The shortest section allowed, in bars.
+        min_section_bars (int): The shortest distance between two boundaries, in bars.
+        edge_bars (int): The shortest first and last section, in bars; peaks this close to
+            either end are dropped. May be larger than min_section_bars.
         prominence (float): How far a novelty peak must stand out, in similarity units
             (a perfect change scores 1).
 
@@ -31,7 +36,7 @@ def find_section_boundaries(
     if n_bars < 2:
         return np.array([0])
     peaks, _ = scipy.signal.find_peaks(novelty, prominence=prominence, distance=min_section_bars)
-    peaks = peaks[(min_section_bars <= peaks) & (peaks <= (n_bars - min_section_bars))]
+    peaks = peaks[(edge_bars <= peaks) & (peaks <= n_bars -edge_bars)]
     peaks = np.concatenate([[0], peaks])
     return peaks
 
@@ -150,6 +155,7 @@ def label_sections(
     rms_s: np.ndarray,
     rms_d1: np.ndarray,
     boundaries: np.ndarray,
+    level_percentile: float,
     drop_level: float,
     build_rise: float,
 ) -> np.ndarray:
@@ -160,13 +166,20 @@ def label_sections(
     rms_s of its beats as its energy and the sum of rms_d1 as its rise, then
     _segment_labels applies the rules.
 
+    The level scale is the level_percentile-th and (100 - level_percentile)-th percentile of
+    rms_s over all beats, not the quietest and loudest segment. A short quiet stretch (fewer
+    than level_percentile % of the beats) then doesn't lift every other segment to a drop,
+    which min-max scaling over the segments did in 6 of 33 songs.
+
     Args:
         grid (BeatGrid): The beat grid the curves belong to. Not modified.
         rms_s (np.ndarray): The smoothed loudness per beat, shape [B]. Not modified.
         rms_d1 (np.ndarray): Its change per beat, shape [B]. Not modified.
         boundaries (np.ndarray): The section starts from find_section_boundaries. Not modified.
-        drop_level (float): The energy level from which a segment is a drop, as a fraction
-            of the song's segment-energy range (0 = quietest segment, 1 = loudest).
+        level_percentile (float): The beat percentile that is level 0; 100 minus it is
+            level 1. In [0, 50); 0 means the quietest and loudest beat.
+        drop_level (float): The level from which a segment is a drop (0 = the low beat
+            percentile, 1 = the high one).
         build_rise (float): The rise from which a segment leading into a drop is a build,
             in rms_s units.
 
@@ -174,44 +187,49 @@ def label_sections(
         np.ndarray: One label per beat, shape [B], every one in SECTION_LABELS.
 
     Raises:
-        ValueError: If rms_s or rms_d1 doesn't have one value per beat."""
+        ValueError: If rms_s or rms_d1 doesn't have one value per beat, or level_percentile
+            is outside [0, 50)."""
     if len(rms_s) != len(grid.times):
         raise ValueError(f"rms_s has {len(rms_s)} values for {len(grid.times)} beats")
     if len(rms_d1) != len(grid.times):
         raise ValueError(f"rms_d1 has {len(rms_d1)} values for {len(grid.times)} beats")
+    if level_percentile < 0 or level_percentile >= 50:
+        raise ValueError("level_percentile needs to be between 0 inclusive and 50 exclusive.")
 
+    energy_lo, energy_hi = np.percentile(rms_s, [level_percentile, 100 - level_percentile])
     bar_idx = np.maximum(grid.bar_idx, 0)
     segments = np.searchsorted(boundaries, bar_idx, side="right") - 1
     # boundaries past the last bar get no beats, and bincount stops at the last segment used
     energy = np.bincount(segments, weights=rms_s) / np.bincount(segments)
     rise = np.bincount(segments, weights=rms_d1)
-    labels = np.array(_segment_labels(energy, rise, drop_level, build_rise))
+    labels = np.array(_segment_labels(energy, rise, energy_lo, energy_hi, drop_level, build_rise))
     return labels[segments]
 
 
-def _segment_labels(energy: np.ndarray, rise: np.ndarray, drop_level: float, build_rise: float) -> list[str]:
+def _segment_labels(energy: np.ndarray, rise: np.ndarray, energy_lo: float, energy_hi: float, drop_level: float, build_rise: float) -> list[str]:
     """Label each segment from its energy, its rise and its position in the song.
 
-    The energies are ranked within the song: level = (energy - min) / (max - min), so the
-    quietest segment is 0 and the loudest 1 (all 0 if they are equal). Rules, first match
-    wins:
+    The energies are placed on the song's own scale: level = (energy - energy_lo) /
+    (energy_hi - energy_lo), all 0 if energy_hi == energy_lo (a song flat at both ends of
+    the scale has no drop). Levels can fall below 0 or above 1. Rules, first match wins:
         1. level >= drop_level                                -> "drop"
         2. rise >= build_rise and the next segment is a drop  -> "build"
         3. the first segment -> "intro", the last -> "outro", any other -> "break"
-    So a single segment is "intro", a loud first or last segment is a "drop", and a rising
-    segment that doesn't lead into a drop (e.g. a fade-in) is not a build.
+    So a single quiet segment is "intro", a loud first or last segment is a "drop", and a
+    rising segment that doesn't lead into a drop (e.g. a fade-in) is not a build.
 
     Args:
         energy (np.ndarray): The mean rms_s of each segment, shape [S]. Not modified.
         rise (np.ndarray): The sum of rms_d1 over each segment, shape [S]. Not modified.
-        drop_level (float): The level from which a segment is a drop, in [0, 1].
+        energy_lo (float): The energy at level 0, in rms_s units.
+        energy_hi (float): The energy at level 1, in rms_s units.
+        drop_level (float): The level from which a segment is a drop.
         build_rise (float): The rise from which a segment leading into a drop is a build,
             in rms_s units.
 
     Returns:
         list[str]: One label per segment, in order, every one in SECTION_LABELS."""
-    energy_min = energy.min()
-    levels = (energy - energy_min) / ((energy.max() - energy_min) or 1)
+    levels = np.zeros(len(energy)) if energy_hi == energy_lo else (energy - energy_lo) / (energy_hi - energy_lo)
     drops = levels >= drop_level
     labels: list[str] = []
     for s in range(len(energy)):

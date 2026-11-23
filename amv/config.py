@@ -129,9 +129,11 @@ class MusicSettings:
     beat_sg_window: int = 5  # beats; SG window on the pooled beat series (odd)
     n_mfcc: int = 13  # MFCCs computed; mfcc_0 (loudness) is dropped
     section_kernel_bars: int = 8  # bars; novelty kernel width, half before and half after a boundary (even)
-    min_section_bars: int = 4  # bars; the shortest section, first and last included
+    min_section_bars: int = 4  # bars; the shortest distance between two section boundaries
+    edge_bars: int = 2  # bars; the shortest first and last section (novelty peaks this close to an end are dropped)
     novelty_prominence: float = 0.1  # how far a novelty peak must stand out; a perfect change scores 1
-    drop_level: float = 0.75  # fraction of the song's segment-energy range (0 quietest, 1 loudest) for a drop
+    level_percentile: float = 10.0  # beat rms_s percentile that is level 0 (100 minus it is level 1); in [0, 50)
+    drop_level: float = 0.70  # segment level from which it is a drop, on the level_percentile scale
     build_rise: float = 0.5  # rms_s gained across a segment before a drop for it to be a build
 
     @property

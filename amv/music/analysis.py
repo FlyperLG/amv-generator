@@ -220,6 +220,7 @@ def _analyse(y: np.ndarray, sample_rate: int, settings: MusicSettings, model: Au
     bounds = find_section_boundaries(
         novelty=section_novelty(bar_features=bars, kernel_bars=settings.section_kernel_bars),
         min_section_bars=settings.min_section_bars,
+        edge_bars=settings.edge_bars,
         prominence=settings.novelty_prominence,
     )
     labels = label_sections(
@@ -227,6 +228,7 @@ def _analyse(y: np.ndarray, sample_rate: int, settings: MusicSettings, model: Au
         rms_s=dyn["rms_s"],
         rms_d1=dyn["rms_d1"],
         boundaries=bounds,
+        level_percentile=settings.level_percentile,
         drop_level=settings.drop_level,
         build_rise=settings.build_rise,
     )

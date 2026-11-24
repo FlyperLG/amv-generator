@@ -66,9 +66,9 @@ class BenchResult:
         """(slowest, fastest) x real time over all repeats: from the max and the min seconds."""
         return self.media_seconds / self.max, self.media_seconds / self.min
 
-    def summarize(self) -> tuple[str, float, float, int, float, float]:
-        """One table row: (name, median s, min s, frames, fps, x real time), as print_table expects."""
-        return (self.name, self.median, self.min, self.n_frames, self.fps, self.x_realtime)
+    def summarize(self) -> tuple[str, float, float, float, int, float, float]:
+        """One table row: (name, median s, min s, max_s, frames, fps, x real time), as print_table expects."""
+        return (self.name, self.median, self.min, self.max, self.n_frames, self.fps, self.x_realtime)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], sources: dict[str, MediaInfo]) -> Self:

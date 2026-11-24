@@ -13,11 +13,17 @@ time_it(fn, warmup=1, repeat=5, name=None) -> (seconds, n_frames)
     now, so it cannot rely on a script's argparse check).
   - Timings are wall-clock seconds (perf_counter), so a child process like ffmpeg is counted.
 
-benchmark(fn, name, media_info, warmup=1, repeat=5) -> BenchResult
-  - name, input and the timings come straight through; media_seconds = media_info.video.duration.
-  - media_info without a video stream -> ValueError (there is no duration to compare against).
+benchmark(fn, name, media_info, stream, warmup=1, repeat=5) -> BenchResult
+  - name, input and the timings come straight through.
+  - stream ("video" | "audio", required) names the stream the timed work is about; its
+    duration is media_seconds. The caller says it, because only the caller knows: an AMV
+    mp4 has both streams, and their durations differ by tens to hundreds of ms. Not
+    container_duration: step 01's end-card cut can make it differ.
+  - The requested stream missing -> ValueError before fn is called, even if the other
+    stream exists (no silent fallback).
 """
 
+import dataclasses
 import time
 from pathlib import Path
 
@@ -111,7 +117,7 @@ class TestBenchmark:
     def test_builds_result_from_timings_and_media(self):
         media = make_media_info(duration=135.84)
 
-        result = benchmark(CountingFn(1087), name="read", media_info=media, warmup=1, repeat=3)
+        result = benchmark(CountingFn(1087), name="read", media_info=media, stream="video", warmup=1, repeat=3)
 
         assert result.name == "read"
         assert result.input is media
@@ -119,13 +125,46 @@ class TestBenchmark:
         assert result.n_frames == 1087
         assert result.media_seconds == pytest.approx(135.84)
 
-    def test_audio_only_media_raises(self):
+    def test_audio_stream_gives_audio_duration(self):
         song = MediaInfo(
-            path=Path("song.mp3"),
-            container_duration=10.0,
+            path=Path("song.wav"),
+            container_duration=134.0,
             video=None,
-            audio=AudioInfo(duration=10.0, sample_rate=44100, channels=2, codec="mp3"),
+            audio=AudioInfo(duration=133.5, sample_rate=22050, channels=1, codec="pcm_s16le"),
         )
 
-        with pytest.raises(ValueError):
-            benchmark(CountingFn(1), name="read", media_info=song, warmup=0, repeat=1)
+        result = benchmark(CountingFn(240), name="beats", media_info=song, stream="audio", warmup=0, repeat=1)
+
+        assert result.media_seconds == pytest.approx(133.5)
+        assert result.input is song
+
+    @pytest.mark.parametrize(("stream", "expected"), [("video", 30.0), ("audio", 29.9)])
+    def test_stream_picks_the_duration_when_both_exist(self, stream, expected):
+        amv = dataclasses.replace(
+            make_media_info(duration=30.0),
+            audio=AudioInfo(duration=29.9, sample_rate=48000, channels=2, codec="aac"),
+        )
+
+        result = benchmark(CountingFn(1), name="read", media_info=amv, stream=stream, warmup=0, repeat=1)
+
+        assert result.media_seconds == pytest.approx(expected)
+
+    @pytest.mark.parametrize("stream", ["video", "audio"])
+    def test_missing_stream_raises_before_calling_fn(self, stream):
+        video_only = make_media_info()
+        audio_only = MediaInfo(
+            path=Path("song.wav"),
+            container_duration=10.0,
+            video=None,
+            audio=AudioInfo(duration=10.0, sample_rate=22050, channels=1, codec="pcm_s16le"),
+        )
+        media = audio_only if stream == "video" else video_only
+        fn = CountingFn(1)
+
+        with pytest.raises(ValueError, match=stream):
+            benchmark(fn, name="read", media_info=media, stream=stream, warmup=0, repeat=1)
+        assert fn.calls == 0
+
+    def test_stream_is_required(self):
+        with pytest.raises(TypeError):
+            benchmark(CountingFn(1), name="read", media_info=make_media_info())  # type: ignore[call-arg]

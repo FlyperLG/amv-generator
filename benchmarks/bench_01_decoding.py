@@ -213,6 +213,7 @@ def main(argv: list[str] | None = None) -> None:
         fn=functools.partial(_measure_proxy_transcode, args.video, n_frames),
         name=Bench.TRANSCODE,
         media_info=media_info,
+        stream="video",
         warmup=args.warmup,
         repeat=args.repeat,
     )
@@ -220,6 +221,7 @@ def main(argv: list[str] | None = None) -> None:
         fn=functools.partial(_measure_iter_frames, args.video, args.fps, args.width, args.height),
         name=Bench.READ_ORIGINAL,
         media_info=media_info,
+        stream="video",
         warmup=args.warmup,
         repeat=args.repeat,
     )
@@ -227,6 +229,7 @@ def main(argv: list[str] | None = None) -> None:
         fn=functools.partial(_measure_iter_frames, proxy_file_path, args.fps, args.width, args.height),
         name=Bench.READ_PROXY,
         media_info=proxy_media_info,
+        stream="video",
         warmup=args.warmup,
         repeat=args.repeat,
     )

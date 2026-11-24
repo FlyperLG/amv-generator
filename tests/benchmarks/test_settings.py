@@ -16,11 +16,11 @@ SPECIFICATION (decisions these tests encode)
 """
 
 import dataclasses
+import importlib
 
 import pytest
 
 from amv.config import DATA_DIR
-from benchmarks import bench_01_decoding
 from benchmarks.settings import BENCH, BenchSettings
 
 
@@ -43,10 +43,12 @@ def test_shared_run_counts_have_the_planned_values():
     assert BENCH.repeat == 5
 
 
-def test_bench_01_defaults_come_from_bench(tmp_path):
+@pytest.mark.parametrize("module_name", ["bench_01_decoding", "bench_02_music"])
+def test_bench_defaults_come_from_bench(tmp_path, module_name):
+    module = importlib.import_module(f"benchmarks.{module_name}")
     run_json = tmp_path / "run.json"
     run_json.write_text("{}", encoding="utf-8")
-    args = bench_01_decoding.parse_args(["--from-json", str(run_json)])  # no video needed
+    args = module.parse_args(["--from-json", str(run_json)])  # no media needed
     assert args.out == BENCH.out_dir
     assert args.warmup == BENCH.warmup
     assert args.repeat == BENCH.repeat

@@ -2,6 +2,7 @@
 
 import time
 from collections.abc import Callable
+from typing import Literal
 
 from tqdm import tqdm
 
@@ -60,6 +61,7 @@ def benchmark(
     fn: Callable[[], int],
     name: str,
     media_info: MediaInfo,
+    stream: Literal["video", "audio"],
     warmup: int = 1,
     repeat: int = 5,
 ) -> BenchResult:
@@ -68,8 +70,10 @@ def benchmark(
     Args:
         fn (Callable[[], int]): The work to measure; see time_it.
         name (str): The benchmark's name, used in the table, the JSON and the plots.
-        media_info (MediaInfo): The file fn processes. Its video duration is the
-            reference for "x real time".
+        media_info (MediaInfo): The file fn processes.
+        stream (Literal["video", "audio"]): The stream the timed work is about; its duration
+            is the reference for "x real time". No default: an AMV has both streams, and
+            only the caller knows which one fn processes.
         warmup (int): Unmeasured calls before the measured ones. Defaults to 1.
         repeat (int): Measured calls. Defaults to 5.
 
@@ -77,16 +81,17 @@ def benchmark(
         BenchResult: The measured timings, the frame count and the media duration.
 
     Raises:
-        ValueError: If media_info has no video stream.
+        ValueError: If media_info has no stream of that kind; fn is not called.
         RuntimeError: If the frame count differs between repeats (see time_it)."""
-    if media_info.video is None:
-        raise ValueError(f"Provided media was not a valid video: {media_info.path}")
-
+    info = media_info.video if stream == "video" else media_info.audio
+    if info is None:
+        raise ValueError(f"{media_info.path} has no {stream} stream")
+    
     seconds, n_frames = time_it(fn, warmup, repeat, name=name)
     return BenchResult(
         name=name,
         input=media_info,
         seconds=seconds,
         n_frames=n_frames,
-        media_seconds=media_info.video.duration,
+        media_seconds=info.duration,
     )

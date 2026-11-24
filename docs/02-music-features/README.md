@@ -48,7 +48,7 @@
 | 3.6 Beat table & script | ✅ done | `amv/music/analysis.py`, `scripts/analyse_music.py` | `tests/music/test_analysis.py` |
 | 3.7 Plot & click track | ✅ done | `checks/music.py`, `checks/plot_music.py`, `checks/settings.py` | `tests/checks/` |
 | 3.9 Section tuning | ✅ done | `amv/music/sections.py`, `amv/config.py`, `amv/music/analysis.py`, `checks/` | `tests/music/test_sections.py`, `tests/checks/test_music.py` |
-| 3.8 Timing benchmark | to do | `benchmarks/bench_02_music.py` | |
+| 3.8 Timing benchmark | ✅ done | `benchmarks/bench_02_music.py`; shared: `benchmarks/timing.py`, `plots.py`, `results.py` | `tests/benchmarks/test_timing.py`, `test_settings.py` (benchmark itself: no tests, see 3.8) |
 
 3.1–3.5 are building blocks; 3.6 runs them on every song and writes the outputs in section 2; 3.7 reads those files, so it checks exactly what later steps read. 3.9 is judged with the 3.7 plots. 3.8 can be done any time.
 
@@ -147,8 +147,41 @@ Settled by the survey, no change:
 - **Half time:** songs at 73–81 BPM may be half-time readings of 146–162 BPM. That's a 3.2 question, and nothing shows it's wrong yet.
 - **`build_rise`:** stays at 0.5. Builds rise too slowly in loudness for per-beat `rms_d1` (see section 4); a better build detector would use `mid` / `flux`, which is a later upgrade.
 
-### 3.8 Timing benchmark
+### 3.8 Timing benchmark ✅
 - `benchmarks/bench_02_music.py`, reusing `benchmarks/timing.py`, `results.py` and `plots.py`. Times the whole analysis of one song (`_analyse`, no I/O) and each stage: beats, dense, timbre, dynamics, sections. The `beat_this` model load is timed separately, as a one-time cost. Report seconds and × real time against the < 15 s target, and log `torch.get_num_threads()`.
+- *Implemented as* `python -m benchmarks.bench_02_music [--song TEXT] [--threads N] [--plot] [--from-json RUN_JSON]`:
+  - **Results, in this order:** `model_load` (with `load_beat_model`'s cache cleared, else it times a dict lookup) and `analyse_cold`, once each and first, so they see a fresh process; then the five stages and the warm `analyse` with `--warmup`/`--repeat` (1/5 from `BENCH`).
+  - **Stage functions return their output** (`_run_beats` → `BeatGrid`, …). Each is called once to make the next stage's input, then timed, so the inputs and the timed code can't diverge. Each returns its output length as the count `time_it` checks between repeats (beats B, frames T), so the frames/fps columns mean "output rows".
+  - **Self-check:** before timing, the beat table built from the stage outputs must equal `_analyse`'s (`assert_frame_equal`). It caught a missing `clean_beats` during the build.
+  - **Target** as ≥ 12× real time (15 s per 180 s), so it doesn't depend on the song's length. The summary also stores the 3-min projection, the first-song cost (model load + cold analysis), each stage's share, torch threads and version.
+  - **Song:** `--song` is a name substring that must match exactly one song table row. The wav is probed, not the mp4: the end-card cut makes them differ.
+  - **Shared code changed:** `benchmark(..., stream="video" | "audio")` is now required and picks the duration for × real time (an AMV has both streams; only the caller knows which one is processed). `plot_throughput` builds its log ticks from the data range (1-3-10 up to 3 decades, decades beyond) with k/M labels, since the cheap stages land near 10⁵×. `print_table` has a max column.
+  - **Figure:** stacked seconds (stages, warm analysis, first song) and × real time with the 12× target line.
+- *Measured 2026-11-24 (AMD Zen 5 desktop, family 26, 16 logical cores, Windows 11, Python 3.12.10, torch 2.14.1 on CPU; Blue Lock AMV wav, 133.0 s):*
+
+  | Result | 8 threads (default) | 2 threads |
+  |---|---|---|
+  | `model_load` | 0.16 s | 0.13 s |
+  | `analyse_cold` | 2.18 s | 4.96 s |
+  | `beats` | 1.59 s (94 %) | 4.45 s (98 %) |
+  | `dense` | 62 ms | 55 ms |
+  | `timbre` | 42 ms | 42 ms |
+  | `dynamics` | 0.8 ms | 0.8 ms |
+  | `sections` | 0.5 ms | 0.5 ms |
+  | **`analyse` (warm)** | **1.81 s, 73× real time** | **4.69 s, 28× real time** |
+  | 3-min song | 2.5 s | 6.3 s |
+  | first song in a fresh process | 2.34 s | 5.09 s |
+
+  - **Target met with room to spare,** also on 2 threads (6.3 s against 15 s), so step 02 fits a small CPU-only machine.
+  - **`beats` is the whole cost;** only it uses torch, so it alone scales with threads. The librosa stages cost ~0.1 s together; sharing one STFT between `dense` and `timbre` would save ~40 ms, not worth it.
+  - **The first call costs more than the model:** the cold analysis is 0.4 s (8 threads) slower than the warm one, probably numba JIT and torch warm-up; the model load is only 0.13–0.16 s.
+  - **Warm analysis − stage sum** (+52 to +146 ms in quiet runs) lies within the `beats` spread, so the stages add up.
+  - **Noise:** a second 2-thread run, with something else loading the machine, gave 5.6 s (24×) with `beats` repeats spread 5.4–6.2 s and the warm analysis 0.55 s *below* the stage sum. A sum far off the warm analysis means re-run.
+  - Not comparable with 3.6's 3.9–7.5 s per song: those were measured on the Intel laptop and include I/O.
+
+  ![Benchmark 3.8: seconds per stage, warm analysis and first song (left); × real time per result with the 12× target (right)](img/bench_02_music.png)
+
+  *Run `bench_02_music_20261124-132035.json` (8 threads). To update: re-run with `--plot`, copy the PNG over `img/bench_02_music.png`, and update the table and date above.*
 
 ## 4. Verification
 
@@ -156,7 +189,7 @@ Settled by the survey, no change:
 - [x] Downbeats land on "1" of the bar. *2026-11-23, 33 songs: the kick is strongest on "1" in 29. Three kick on every beat, and Show Them All peaks on position 3; all of these are right by their section starts.*
 - [x] In the Blue Lock song (hardstyle): the build segments before both drops have a summed `rms_d1` ≥ `build_rise`, and the drop boundaries sound right. *Reworded 2026-11-23 from "rising `rms_d1` per beat and a clear `rms_d2` spike". Builds rise too slowly for that (about 0.003 per beat), and pre-drop fills dominate both curves. Measured: summed rise +0.66 / +0.67 (≥ 0.5); drop boundaries at 31.9 s and 105.5 s confirmed by ear. `mid_s` and `flux_s` show the builds more clearly than `rms`.*
 - [x] Tempo of the Blue Lock song ≈ 176 BPM, steady through the half-time breakdown after `clean_beats` (`test_bluelock_tempo_is_steady_after_cleaning`).
-- [x] Processing a 3-min song takes < 15 s on CPU (3.9–7.5 s per song, see 3.6; 3.8 adds a proper benchmark).
+- [x] Processing a 3-min song takes < 15 s on CPU. *3.8 (2026-11-24): 2.5 s with 8 torch threads, 6.3 s with 2.*
 
 ## 5. Pitfalls
 
@@ -167,7 +200,7 @@ Settled by the survey, no change:
 
 ## 6. CPU budget
 
-Measured: 4–7.5 s per song in total, dominated by `beat_this` (~3 s); librosa features + SG < 0.5 s. Cached, so a song is analysed once.
+Measured (3.8, AMD desktop): 1.8 s per 133 s song warm (73× real time; 2.5 s for a 3-min song), 4.7 s on 2 torch threads (6.3 s for 3 min). `beat_this` is 94–98 % of it; the librosa features ~0.1 s, dynamics and sections < 2 ms. Once per process: 0.15 s model load plus ~0.3–0.5 s first-call overhead. Cached, so a song is analysed once.
 
 ## 7. Later upgrade (optional)
 

@@ -1,6 +1,7 @@
 """Plot panels that work for any benchmark run. Each draws into an Axes the caller provides."""
 
 from collections.abc import Mapping
+import math
 
 from matplotlib.axes import Axes
 from matplotlib.ticker import FuncFormatter, MaxNLocator, NullFormatter
@@ -8,10 +9,21 @@ from matplotlib.ticker import FuncFormatter, MaxNLocator, NullFormatter
 from benchmarks.results import BenchResult
 
 
+def _format_x(value: float) -> str:
+    """An "x real time" value with 3 significant digits and a k/M suffix: 28.4x, 2.42kx, 253kx."""
+    for factor, suffix in ((1e6, "M"), (1e3, "k")):
+        if value >= factor:
+            return f"{value / factor:.3g}{suffix}x"
+    return f"{value:.3g}x"
+
+
 def plot_throughput(ax: Axes, results: list[BenchResult], colors: Mapping[str, str]) -> None:
     """Horizontal bars of the median x real time, on a log axis starting at 1x (real time).
 
     Whiskers span the slowest to the fastest repeat; each bar is labelled with its value.
+    The axis ends a decade past the longest whisker, room for the labels. Ticks follow the
+    range: 1-3-10 up to 3 decades, only decades beyond (bench_02's cheap stages reach
+    ~10^5x); ticks and labels use _format_x.
 
     Args:
         ax (Axes): The panel to draw into.
@@ -32,11 +44,13 @@ def plot_throughput(ax: Axes, results: list[BenchResult], colors: Mapping[str, s
         xerr=whiskers,
     )
     ax.set_xscale("log")
-    ax.bar_label(throughput_bars, fmt="%.2fx", padding=3)
-    right = max(r.x_realtime_range[1] for r in results)  # end of the longest whisker
-    ax.set_xlim(left=1, right=right * 3)
-    ax.set_xticks([1, 3, 10, 30, 100, 300])
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:g}x"))
+    ax.bar_label(throughput_bars, labels=[_format_x(v) for v in medians], padding=3)
+    right = max(r.x_realtime_range[1] for r in results) * 10  # a decade of room for the bar labels
+    ax.set_xlim(left=1, right=right)
+    n_decades = math.floor(math.log10(right))
+    steps = (1, 3) if n_decades <= 3 else (1,)  # 1-3-10 on short axes, decades only on long ones
+    ax.set_xticks([m * 10**e for e in range(n_decades + 1) for m in steps if m * 10**e <= right])
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: _format_x(x)))
     ax.xaxis.set_minor_formatter(NullFormatter())
     ax.yaxis.set_inverted(True)
     ax.set_title("Throughput (x real time)")

@@ -91,6 +91,8 @@ Typical calls later:
 
 *Measurement decisions: wall clock via `perf_counter` (ffmpeg is a child process, so `process_time` would miss it); every measured function returns the frame count it processed, and the run fails if that count differs between repeats; the transcode writes into a fresh temp dir every repeat, otherwise the skip rule would measure a file-exists check; results are medians. **Thermal drift:** the CPU is a laptop Alder Lake-P chip that boosts (PL2) for ~10 s and then drops to its sustained limit (PL1). The transcode is the heaviest load (x264 on all threads) and runs first, so its early repeats are fast and later ones up to ~40 % slower; the reads stay within ~5 %. Not a leak (no ffmpeg processes are left behind). Possible improvement: interleave the repeats of the three benchmarks so that all of them see the same thermal state.*
 
+*Changed in step 02, task 3.8: `benchmark()` takes a required `stream="video" | "audio"` that picks the duration for × real time (bench_01 passes `"video"`); the throughput panel builds its ticks from the data range with k/M labels; `print_table` has a max column.*
+
 Add a small benchmark script that prints, for the Blue Lock AMV:
 - proxy transcode time and × real time
 - frame reader throughput at 8 fps / 320 px from the **proxy** vs from the **original**
@@ -236,3 +238,14 @@ Machine: Intel 12th-gen (Alder Lake-P, laptop) CPU, 16 logical cores, Windows 11
 ![Benchmark 3.5: throughput in × real time, break-even between reading the original and transcode + reading the proxy, and timing per repeat](img/bench_01_decoding.png)
 
 *Run of 2026-10-24 (`bench_01_decoding_20261024-185739.json`). To update: re-run the benchmark with `--plot`, copy the PNG over `img/bench_01_decoding.png`, and update the table and date above.*
+
+**Re-measured 2026-11-24 on the AMD Zen 5 desktop** (family 26, 16 logical cores, Python 3.12.10, ffmpeg 9.1 gyan.dev), same defaults, run `bench_01_decoding_20261124-132452.json`:
+
+| Benchmark | median s | min s | frames | fps | × real time | spread |
+|---|---|---|---|---|---|---|
+| `proxy_transcode` | 1.74 | 1.72 | 3984 | 2289 | 76.4 | 4 % |
+| `iter_frames_original` | 1.37 | 1.37 | 1063 | 773 | 96.7 | 1 % |
+| `iter_frames_proxy` | 0.20 | 0.20 | 1063 | 5218 | 652.5 | 4 % |
+
+- **Proxy read speedup 6.7×** (target ≥5×), break-even after **1.5 full reads**, as on the laptop. Everything is 2.5–2.8× faster, and no thermal drift (spread ≤ 4 %).
+- The source now reads 1063 frames at 8 fps instead of 1087 (about 3 s shorter), so the two runs differ in input as well as machine.

@@ -65,7 +65,7 @@ Each step has its own folder with a detailed description: goal, inputs/outputs, 
 |---|---|---|---|---|
 | 00 | [Setup](00-setup/README.md) | working env, ffmpeg, repo layout | Foundation | ✅ |
 | 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation | ✅ AMV end cards cut from both proxies (3.8); proxy reads 7.3× faster; `python -m scripts.build_video_table` → `data/cache/videos.parquet`, `python -m scripts.build_song_table` → `data/cache/songs.parquet` |
-| 02 | [Music features](02-music-features/README.md) | per-beat feature table | Features | 🔨 3.1–3.7 and 3.9 done, 3.8 to do |
+| 02 | [Music features](02-music-features/README.md) | per-beat feature table | Features | ✅ beat table + dense curves per song (`python -m scripts.analyse_music`); 2.5 s per 3-min song on CPU (6.3 s on 2 threads) |
 | 03 | [Shot detection](03-shot-detection/README.md) | shot list per video | Features |  |
 | 04 | [Clip features](04-clip-features/README.md) | clip table with `z_sem`, `z_dyn` | Features |  |
 | 05 | [Retrieval](05-retrieval/README.md) | clip index, scoring, beam search | Baseline |  |
@@ -120,6 +120,7 @@ Reference machine: 16 logical cores, PyTorch eager, ~30–80 GFLOP/s effective.
 | Stage | Frequency | Target |
 |---|---|---|
 | 1080p → 360p proxy transcode | once per video | ~3–8× real time (decode is the bottleneck); **measured 25–31×** (sustained ~25×) |
+| Music analysis (beats, features, sections) | once per song | <15 s per 3-min song; **measured 2.5 s** (73×), 6.3 s on 2 torch threads |
 | Shot detection on proxies | once | >10× real time |
 | CLIP ViT-B/32, 1–2 frames per clip | once per library | 30–60 min per 12-episode season |
 | Optical flow 160×90 @ 8 fps | once per library | 5–15 min per season |

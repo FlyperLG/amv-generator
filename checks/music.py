@@ -353,7 +353,9 @@ def draw_sections(ax: Axes, beats: pd.DataFrame) -> None:
     section = beats["section"].to_numpy()
     starts = np.r_[0, np.flatnonzero(section[1:] != section[:-1]) + 1]
 
-    for start, end, label in zip(t[starts], np.r_[t[starts[1:]], t[-1] + ibi[-1]], section[starts]):
+    for start, end, label in zip(
+        t[starts], np.r_[t[starts[1:]], t[-1] + ibi[-1]], section[starts], strict=True
+    ):
         ax.axvspan(start, end, color=SECTION_COLORS[label], alpha=0.15, lw=0, zorder=0)
 
 
@@ -451,7 +453,7 @@ def plot_novelty(
     ax.vlines(px[rej], base[rej], py[rej], colors="0.6", lw=1.5)
     ax.plot(px[sel], py[sel], "v", color="tab:purple", label="boundary")
 
-    for px_i, py_i, prom_i, is_picked in zip(px[pm], py[pm], prom[pm], picked[pm]):
+    for px_i, py_i, prom_i, is_picked in zip(px[pm], py[pm], prom[pm], picked[pm], strict=True):
         ax.annotate(
             f"{prom_i:.2f}",
             (px_i, py_i),
@@ -528,9 +530,9 @@ def plot_song(
     axes[-1].set_xlabel("time (s)")
 
     handles = [
-        Patch(color=SECTION_COLORS[l], alpha=0.3, label=l)
-        for l in SECTION_LABELS
-        if l in set(analysis.beats["section"])
+        Patch(color=SECTION_COLORS[label], alpha=0.3, label=label)
+        for label in SECTION_LABELS
+        if label in set(analysis.beats["section"])
     ]
 
     axes[0].legend(handles=handles, loc="upper right", ncols=len(handles), fontsize=7)

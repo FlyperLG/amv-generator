@@ -386,7 +386,9 @@ def test_plot_novelty_hatches_the_first_and_last_edge_bars():
     plot_novelty(ax, check, prominence=0.1, edge_bars=3, window=None)
 
     hatched = sorted(
-        (round(p.get_x(), 6), round(p.get_x() + p.get_width(), 6)) for p in ax.patches if p.get_hatch() == "//"
+        (round(p.get_x(), 6), round(p.get_x() + p.get_width(), 6))
+        for p in ax.patches
+        if p.get_hatch() == "//"
     )
     assert hatched == [(0.0, 3.0), (17.0, 19.0)]
 

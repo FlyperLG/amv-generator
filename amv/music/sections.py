@@ -36,7 +36,7 @@ def find_section_boundaries(
     if n_bars < 2:
         return np.array([0])
     peaks, _ = scipy.signal.find_peaks(novelty, prominence=prominence, distance=min_section_bars)
-    peaks = peaks[(edge_bars <= peaks) & (peaks <= n_bars -edge_bars)]
+    peaks = peaks[(edge_bars <= peaks) & (peaks <= n_bars - edge_bars)]
     peaks = np.concatenate([[0], peaks])
     return peaks
 
@@ -206,7 +206,14 @@ def label_sections(
     return labels[segments]
 
 
-def _segment_labels(energy: np.ndarray, rise: np.ndarray, energy_lo: float, energy_hi: float, drop_level: float, build_rise: float) -> list[str]:
+def _segment_labels(
+    energy: np.ndarray,
+    rise: np.ndarray,
+    energy_lo: float,
+    energy_hi: float,
+    drop_level: float,
+    build_rise: float,
+) -> list[str]:
     """Label each segment from its energy, its rise and its position in the song.
 
     The energies are placed on the song's own scale: level = (energy - energy_lo) /
@@ -229,7 +236,9 @@ def _segment_labels(energy: np.ndarray, rise: np.ndarray, energy_lo: float, ener
 
     Returns:
         list[str]: One label per segment, in order, every one in SECTION_LABELS."""
-    levels = np.zeros(len(energy)) if energy_hi == energy_lo else (energy - energy_lo) / (energy_hi - energy_lo)
+    levels = (
+        np.zeros(len(energy)) if energy_hi == energy_lo else (energy - energy_lo) / (energy_hi - energy_lo)
+    )
     drops = levels >= drop_level
     labels: list[str] = []
     for s in range(len(energy)):

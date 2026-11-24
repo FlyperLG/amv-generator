@@ -117,7 +117,9 @@ class TestBenchmark:
     def test_builds_result_from_timings_and_media(self):
         media = make_media_info(duration=135.84)
 
-        result = benchmark(CountingFn(1087), name="read", media_info=media, stream="video", warmup=1, repeat=3)
+        result = benchmark(
+            CountingFn(1087), name="read", media_info=media, stream="video", warmup=1, repeat=3
+        )
 
         assert result.name == "read"
         assert result.input is media

@@ -195,7 +195,8 @@ def parse_args(argv: list[str] | None = None) -> Args:
 
     if not args.song_table.exists():
         parser.error(
-            f"Song table does not exist: {args.song_table}. Run `python -m scripts.build_song_table` to create."
+            f"Song table does not exist: {args.song_table}. "
+            "Run `python -m scripts.build_song_table` to create."
         )
     if args.start is not None and args.start < 0:
         parser.error(f"Start needs to be greater or equal than 0, was {args.start}.")

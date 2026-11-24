@@ -137,9 +137,13 @@ BUILD_RISE = 0.5
 BEATS_PER_BAR = 4
 
 
-def boundaries(bar_features, kernel_bars=K, min_section_bars=MIN_BARS, edge_bars=EDGE_BARS, prominence=PROMINENCE):
+def boundaries(
+    bar_features, kernel_bars=K, min_section_bars=MIN_BARS, edge_bars=EDGE_BARS, prominence=PROMINENCE
+):
     """The whole chain from bar features to boundaries."""
-    return find_section_boundaries(section_novelty(bar_features, kernel_bars), min_section_bars, edge_bars, prominence)
+    return find_section_boundaries(
+        section_novelty(bar_features, kernel_bars), min_section_bars, edge_bars, prominence
+    )
 
 
 def bounds_of(novelty, min_section_bars=MIN_BARS, edge_bars=EDGE_BARS, prominence=PROMINENCE):
@@ -199,7 +203,13 @@ def per_bar(grid, values_per_bar):
 
 
 def labels_for(
-    segment_bars, energy, rise=None, percentile=PERCENTILE, drop_level=DROP_LEVEL, build_rise=BUILD_RISE, pickup=0
+    segment_bars,
+    energy,
+    rise=None,
+    percentile=PERCENTILE,
+    drop_level=DROP_LEVEL,
+    build_rise=BUILD_RISE,
+    pickup=0,
 ):
     """Label a grid whose segments are segment_bars bars long, with a flat rms_s per segment and
     rms_d1 spread evenly so each segment's sum is its rise. Returns (grid, labels)."""
@@ -844,7 +854,13 @@ def test_bluelock_sections_are_plausible(beat_model, bluelock_wav):
         novelty, c.MUSIC.min_section_bars, c.MUSIC.edge_bars, c.MUSIC.novelty_prominence
     )
     labels = label_sections(
-        grid, dyn["rms_s"], dyn["rms_d1"], found, c.MUSIC.level_percentile, c.MUSIC.drop_level, c.MUSIC.build_rise
+        grid,
+        dyn["rms_s"],
+        dyn["rms_d1"],
+        found,
+        c.MUSIC.level_percentile,
+        c.MUSIC.drop_level,
+        c.MUSIC.build_rise,
     )
 
     assert 4 <= len(found) <= 12

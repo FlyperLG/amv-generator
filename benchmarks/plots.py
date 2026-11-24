@@ -1,7 +1,7 @@
 """Plot panels that work for any benchmark run. Each draws into an Axes the caller provides."""
 
-from collections.abc import Mapping
 import math
+from collections.abc import Mapping
 
 from matplotlib.axes import Axes
 from matplotlib.ticker import FuncFormatter, MaxNLocator, NullFormatter

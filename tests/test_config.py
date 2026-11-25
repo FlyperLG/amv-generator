@@ -3,9 +3,9 @@
 SPECIFICATION
   - Each section of settings is a frozen dataclass whose defaults are the configured
     values, plus one instance: PATHS (PathSettings), DECODING (DecodingSettings, step 01),
-    MUSIC (MusicSettings, step 02). Library code takes them as arguments; only entry
-    points import the instances. (Decision: one typed section per step, like an options
-    class in C#, instead of loose module constants.)
+    MUSIC (MusicSettings, step 02), SHOTS (ShotSettings, step 03). Library code takes them
+    as arguments; only entry points import the instances. (Decision: one typed section per
+    step, like an options class in C#, instead of loose module constants.)
   - Besides the instances, the module only exports the anchors ROOT and DATA_DIR: no loose
     UPPER_CASE settings.
   - config.py is a leaf: it imports nothing from amv, so importing it for typing can never
@@ -32,11 +32,13 @@ from amv.config import (
     DECODING,
     MUSIC,
     PATHS,
+    SHOTS,
     AudioProxySettings,
     DecodingSettings,
     EndCardSettings,
     MusicSettings,
     PathSettings,
+    ShotSettings,
     VideoProxySettings,
 )
 
@@ -47,6 +49,7 @@ SECTIONS = [
     (DECODING.audio_proxy, AudioProxySettings),
     (DECODING.end_card, EndCardSettings),
     (MUSIC, MusicSettings),
+    (SHOTS, ShotSettings),
 ]
 
 
@@ -66,7 +69,7 @@ def test_each_section_is_frozen(instance, cls):
 def test_only_the_anchors_and_the_sections_are_upper_case():
     upper = {name for name in vars(config) if name.isupper()}
 
-    assert upper == {"ROOT", "DATA_DIR", "PATHS", "DECODING", "MUSIC"}
+    assert upper == {"ROOT", "DATA_DIR", "PATHS", "DECODING", "MUSIC", "SHOTS"}
 
 
 def test_config_imports_nothing_from_amv():

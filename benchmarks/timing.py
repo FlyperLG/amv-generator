@@ -86,7 +86,7 @@ def benchmark(
     info = media_info.video if stream == "video" else media_info.audio
     if info is None:
         raise ValueError(f"{media_info.path} has no {stream} stream")
-    
+
     seconds, n_frames = time_it(fn, warmup, repeat, name=name)
     return BenchResult(
         name=name,

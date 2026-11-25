@@ -1,7 +1,7 @@
 """Central settings for the whole pipeline.
 
 Each section is a frozen dataclass whose defaults are the configured values, plus one
-instance of it (PATHS, DECODING, MUSIC). Library functions never import these instances:
+instance of it (PATHS, DECODING, MUSIC, SHOTS). Library functions never import these instances:
 entry points (scripts, benchmarks) pass a whole section to the functions that cache
 outputs, and single fields (MUSIC.min_ibi) to the others. Variants for tests or
 experiments: dataclasses.replace(MUSIC, drop_level=0.5).
@@ -41,6 +41,7 @@ class PathSettings:
     video_table_path: Path = DATA_DIR / "cache" / "videos.parquet"  # step 01 output, read by every later step
     song_table_path: Path = DATA_DIR / "cache" / "songs.parquet"  # step 01 output, read by every later step
     music_cache_dir: Path = DATA_DIR / "cache" / "music"  # step 02 beat tables and dense curves
+    label_dir: Path = DATA_DIR / "labels"  # step 03 hand-labelled cuts (cuts_<video_id>.csv), kept in git
 
 
 PATHS = PathSettings()
@@ -145,3 +146,16 @@ class MusicSettings:
 
 
 MUSIC = MusicSettings()
+
+
+# --- Step 03: shot detection -------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ShotSettings:
+    """Step 03: shot detection and how it is scored against the hand labels."""
+
+    eval_tol: int = 2  # frames; a detected cut this close to a labelled one counts as found
+
+
+SHOTS = ShotSettings()

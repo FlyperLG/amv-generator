@@ -39,7 +39,7 @@
 
 | Task | Status | Code | Tests |
 |---|---|---|---|
-| 3.4 Hand labels + metric | 🔄 AMV minute labelled (76 cuts); loader + P/R/F1 specified, not implemented; episode minute open | `amv/shots/labels.py`, `amv/shots/metrics.py` | `tests/shots/test_labels.py`, `tests/shots/test_metrics.py` |
+| 3.4 Hand labels + metric | 🔄 AMV minute labelled (76 cuts); loader + P/R/F1 metric implemented and tested; episode minute open | `amv/shots/labels.py`, `amv/shots/metrics.py` | `tests/shots/test_labels.py`, `tests/shots/test_metrics.py` |
 | 3.1 Baseline detector | open | | |
 | 3.2 Flash / fade handling | open | | |
 | 3.3 TransNetV2 (optional) | open | | |
@@ -70,6 +70,7 @@
   - `soft`: there are frames where neither shot is clearly shown (dissolve, fade through black/white, flash, glitch noise). The label is the middle of those frames.
   - Effects inside one shot are **not** cuts: colour cycles, inverted/negative frames, black strobe frames, blur-in, zoom. On the Blue Lock AMV these give ~15 frame-difference peaks as large as real cuts (e.g. 1101–1105, 1140–1146, 1642–1657), a built-in false-positive test for `ContentDetector`.
 - *Metric:* one-to-one maximum matching within ±`SHOTS.eval_tol` frames; detections outside the window are ignored; F1 is reported for all cuts and per type (hard / soft), with the detection − label offsets to spot off-by-one bias. Open: a wider tolerance for soft labels, decided once offsets on real detections are known.
+  - *Implemented as:* `match_cuts` sorts both lists and walks them once; each label takes the earliest unused detection within reach. This is a maximum matching because all reaches are the same width. `score_cuts(..., cut_type=)` matches against **all** labels and then keeps the pairs whose label has that type, so a found soft cut is neither TP nor FP in the hard score, and `fp` (detections matched to no label) is the same for every type.
 - *Labelled so far:* Blue Lock AMV, frames 899–2697 (~30–90 s): 76 cuts, 51 hard / 25 soft. Checked against a frame-difference signal and by eye; 6 fixes applied (one missed cut, two double labels, three soft labels moved to the transition middle).
 
 ### 3.5 Library clipping

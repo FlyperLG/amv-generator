@@ -66,7 +66,7 @@ Each step has its own folder with a detailed description: goal, inputs/outputs, 
 | 00 | [Setup](00-setup/README.md) | working env, ffmpeg, repo layout | Foundation | ✅ |
 | 01 | [Decoding & proxies](01-decoding-and-proxies/README.md) | 360p proxy files, frame reader | Foundation | ✅ AMV end cards cut from both proxies (3.8); proxy reads 7.3× faster; `python -m scripts.build_video_table` → `data/cache/videos.parquet`, `python -m scripts.build_song_table` → `data/cache/songs.parquet` |
 | 02 | [Music features](02-music-features/README.md) | per-beat feature table | Features | ✅ beat table + dense curves per song (`python -m scripts.analyse_music`); 2.5 s per 3-min song on CPU (6.3 s on 2 threads) |
-| 03 | [Shot detection](03-shot-detection/README.md) | shot list per video | Features | 🔄 3.4: AMV minute hand-labelled (76 cuts), loader + metric tests written |
+| 03 | [Shot detection](03-shot-detection/README.md) | shot list per video | Features | 🔄 3.4: AMV minute hand-labelled (76 cuts), loader + metric implemented; episode minute open |
 | 04 | [Clip features](04-clip-features/README.md) | clip table with `z_sem`, `z_dyn` | Features |  |
 | 05 | [Retrieval](05-retrieval/README.md) | clip index, scoring, beam search | Baseline |  |
 | 06 | [Physics baseline & renderer](06-physics-baseline-and-renderer/README.md) | **first full AMV (A0)** | Baseline |  |

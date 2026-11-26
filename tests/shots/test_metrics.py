@@ -104,6 +104,36 @@ def test_matching_is_maximum_not_nearest_first():
     assert pairs([8, 11], [10, 13]) == [(0, 0), (1, 1)]
 
 
+def test_detection_past_one_label_stays_free_for_the_next():
+    # 20 is too far above label 10, but it is exactly label 20. Skipping past it while
+    # looking for 10's partner would lose the pair.
+    assert pairs([10, 20], [20]) == [(1, 0)]
+
+
+def test_matching_size_equals_brute_force_maximum():
+    rng = np.random.default_rng(0)
+    for _ in range(500):
+        true = sorted(rng.choice(60, size=rng.integers(0, 9), replace=False).tolist())
+        pred = rng.integers(0, 60, size=rng.integers(0, 9)).tolist()
+        assert len(pairs(true, pred)) == _max_matching_size(true, pred, TOL), (true, pred)
+
+
+def _max_matching_size(true, pred, tol) -> int:
+    """Reference maximum bipartite matching (augmenting paths), for small inputs only."""
+    owner: dict[int, int] = {}
+
+    def augment(i: int, seen: set[int]) -> bool:
+        for j, p in enumerate(pred):
+            if abs(p - true[i]) <= tol and j not in seen:
+                seen.add(j)
+                if j not in owner or augment(owner[j], seen):
+                    owner[j] = i
+                    return True
+        return False
+
+    return sum(augment(i, set()) for i in range(len(true)))
+
+
 def test_indices_refer_to_unsorted_inputs():
     result = pairs([90, 10, 50], [51, 89, 11])
 
